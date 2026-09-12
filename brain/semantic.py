@@ -21,10 +21,20 @@ logger = get_logger(__name__)
 
 DEFAULT_DIR = Path.home() / ".pico"
 DIM = 256
+STOPWORDS = frozenset(
+    """a an the and or but if in on at to for of with you i we he she it is was be
+    are do does did my your our me us them their his her not no so as from by
+    about into over""".split()
+)
 
 
 class HashingEmbedding:
-    """Deterministic local embedding via feature hashing, L2-normalized."""
+    """Deterministic local embedding via feature hashing, L2-normalized.
+
+    Words (minus stopwords) and word-bounded character trigrams are hashed into
+    a fixed-size vector, so text that shares roots (pasta/spaghetti, shop/shopping)
+    lands closer together without any network or external model.
+    """
 
     name = "hash256"
 
@@ -44,12 +54,13 @@ class HashingEmbedding:
 
     @staticmethod
     def _tokens(text: str) -> List[str]:
-        """Yield word tokens and character trigrams over the cleaned text."""
-        lowered = text.lower()
-        words = re.findall(r"[a-z0-9]+", lowered)
-        cleaned = re.sub(r"[^a-z0-9]", "", lowered)
-        tokens = list(words)
-        tokens.extend(cleaned[i : i + 3] for i in range(max(0, len(cleaned) - 2)))
+        """Yield word tokens and per-word char trigrams for one text."""
+        words = [w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOPWORDS]
+        tokens: List[str] = []
+        for word in words:
+            tokens.append("w:" + word)
+            bounded = f" {word} "
+            tokens.extend(f"c:{bounded[i:i + 3]}" for i in range(len(bounded) - 2))
         return tokens
 
 

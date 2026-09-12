@@ -17,8 +17,9 @@ _EXECUTOR_SYSTEM_PROMPT = (
     "Never delete files, never access paths outside the project root, "
     "and never invent tool results. If a tool refuses a request, report why. "
     "Capture what you learn: save durable facts with memory_remember, keep quick "
-    "session notes with memory_note, and record valuable completed steps with "
-    "memory_episode."
+    "session notes with memory_note, record valuable completed steps with "
+    "memory_episode, and store memorable sentences with semantic_remember. Use "
+    "semantic_search to recall past memories by meaning."
 )
 
 
