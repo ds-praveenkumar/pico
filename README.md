@@ -72,6 +72,32 @@ LLM request, which agent is calling, memory sizes, and a log tail. After each
 task the completed plan, the summary, and a session token-usage line are printed
 back in the normal console.
 
+```
+╭─ status ───────────────────────────────────────────────╮
+│ pico — your day-to-day assistant                       │
+│ provider=nvidia  model=gpt-5  tokens: 412 in / 96 out  │
+├─ Task plan ──────────────────┬─ Tokens ────────────────┤
+│ ○ pending   executor: read    │ prompt          412    │
+│ ▶ running   pico: plan        │ completion       96    │
+│ ○ pending   researcher: …     │ total            508   │
+│                              ├─ Activity ─────────────┤
+│                              │ executor           2    │
+│                              │ researcher         1    │
+│                              ├─ Memory ───────────────┤
+│                              │ working: 6             │
+│                              │ long-term: 3           │
+│                              │ semantic: 4            │
+│                              ├─ Log tail ─────────────┤
+│                              │ pico :: planning …     │
+├─ executing plan… ─────────────────────────────────────┤
+╰───────────────────────────────────────────────────────╯
+```
+
+Render details (colors are live): cyan status header, blue task plan, green
+right column (tokens / activity / memory / log tail), and a magenta footer
+status line. The dashboard takes over the alternate screen during a task and
+restores the normal console when it finishes.
+
 Token accounting lives on each LLM client (`BaseLLM.usage` / `last_generation`);
 `Pico.usage` sums across the orchestrator and both sub-agents.
 
