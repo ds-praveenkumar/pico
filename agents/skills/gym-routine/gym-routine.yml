@@ -1,0 +1,60 @@
+---
+name: gym-routine
+description: >-
+  Build and manage the master's gym workout routines — training splits, sets and
+  reps, progressive overload, and progress logging. Load this skill whenever pico
+  needs to plan a workout, adjust a routine, or track training progress.
+version: 1.0.0
+type: skill
+---
+# Gym Routine
+
+## Purpose
+This skill turns pico into a personal training planner for the master, Praveen.
+It designs safe, balanced routines from a stated goal and logs progress so the
+plan improves over time.
+
+## When to use
+- The master asks for a workout plan or a weekly training split.
+- A routine needs adjusting (stalls, schedule changes, injury limitations).
+- Tracking sets/reps/weights and deciding when to progress.
+
+## Input interface
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| goal | string | yes | Build muscle, lose fat, strength, endurance, or general fitness. |
+| days_per_week | integer | yes | Number of training days (1-6). |
+| equipment | string | no | What is available: gym, home, dumbbells, bodyweight, etc. |
+| constraints | string | no | Injuries, limitations, or preferences (hates cardio, short sessions, etc.). |
+| experience | string | no | Beginner, intermediate, or advanced (default: intermediate). |
+
+## Output interface
+| Parameter | Type | Description |
+| --- | --- | --- |
+| split | string | Day-by-day plan (exercises, sets, reps, rest). |
+| progression | string | How to progress week to week (weight/reps/RPE). |
+| logging | string | What to record each session so progress can be reviewed. |
+
+## Steps to follow
+1. **Ask what is missing** — if goal, days, or equipment are unclear, ask the master first.
+2. **Set the split** — distribute training days across push / pull / legs, or
+   upper / lower, depending on goal and days_per_week.
+3. **Choose exercises** — compound movements first, then accessories; respect
+   equipment and constraints.
+4. **Prescribe volume** — sets and rep ranges for the goal: hypertrophy 3-4 × 6-12,
+   strength 3-5 × 1-6, endurance 2-3 × 15+.
+5. **Define progression** — add weight or a rep when the top of the range is hit.
+6. **Give the logging format** — date, exercise, sets × reps × weight, and notes.
+7. **Offer to store it** — save the current routine with `memory_remember` so it
+   can be reviewed next session.
+
+## Progression rules (safely)
+- Add the smallest available increment; never more than ~5% per week on a lift.
+- Deload or reduce volume after several stalled weeks rather than pushing through.
+- Warm up and rest days are part of the plan, not optional.
+
+## Safety rules (non-negotiable)
+- Never prescribe anything that conflicts with a stated injury or medical advice;
+  recommend checking with a professional when in doubt.
+- No extreme diets, no unsafe exercise form, no supplement claims.
+- pico records the plan and progress but never shares it outside the master's machine.

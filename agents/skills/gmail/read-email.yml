@@ -1,0 +1,59 @@
+---
+name: gmail
+description: >-
+  Read and search the master's Gmail inbox over IMAP: latest emails, unread
+  messages, and keyword searches. Load this skill whenever pico needs to check
+  email, find a message, or summarize recent mail.
+version: 1.0.0
+type: skill
+---
+# Gmail Access
+
+## Purpose
+This skill lets pico read the master's Gmail inbox on demand — checking for
+important mail, finding messages, and summarizing what arrived.
+
+## When to use
+- The master asks "check my email", "any unread mail?", or "read important emails".
+- A task depends on a message pico needs to fetch (subject, sender, snippet).
+- Summarizing recent mail into a short briefing.
+
+## Integration status (wired)
+- pico exposes two read-only tools using the stdlib IMAP client:
+  - `gmail_latest(limit, folder, unread_only)` — most recent emails.
+  - `gmail_search(query, limit, folder)` — IMAP `SEARCH` (e.g. `FROM "x@y.com"`).
+- Reads headers and short snippets only; emails are never deleted or modified
+  (`BODY.PEEK`, `select(readonly=True)`).
+
+## Prerequisites
+- `.env` must contain `GMAIL_IMAP_USER` (the Gmail address) and
+  `GMAIL_IMAP_PASSWORD` (the account **app password**, not the account password).
+- Google account must have IMAP enabled (Settings → Forwarding and POP/IMAP).
+- If credentials are missing, the tools return a clear error asking the master
+  to configure them.
+
+## Input interface
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| limit | integer | no | How many emails to fetch (1-20, default 5). |
+| folder | string | no | Mailbox folder (default `INBOX`). |
+| unread_only | bool | no | Fetch only unseen messages (`gmail_latest`). |
+| query | string | yes | IMAP search expression (`gmail_search`). |
+
+## Output interface
+Each email is summarized as: `uid`, `subject`, `from`, `date`, `snippet` (plain text).
+
+## Steps to follow
+1. **Confirm the ask** — what the master wants: latest mail, unread, or a search.
+2. **Call the right tool** — `gmail_latest` for recent/unread, `gmail_search`
+   for a specific query.
+3. **Read the results** — pay attention to subjects and senders.
+4. **Summarize** — a short briefing of what matters; ask before acting on any mail.
+5. **Remember when useful** — save durable facts (e.g. "salary email arrived")
+   with `memory_remember` or `semantic_remember`.
+
+## Safety rules (non-negotiable)
+- Read-only: never delete, move, flag, send, or modify messages.
+- Only the mail the master asked about; never unrelated inboxes or drafts.
+- Credentials stay in `.env` (git-ignored) and are never logged or echoed.
+- Do not act on emails (pay, reply, click links) without the master's approval.

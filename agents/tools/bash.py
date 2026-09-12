@@ -1,14 +1,15 @@
 """Safe shell execution tool.
 
-Runs commands with a command allowlist, a destructive-command blocklist,
-a timeout, and captured output. Never executes anything the allowlist rejects.
+Runs commands through the sandbox (scrubbed environment + resource limits,
+see :mod:`agents.tools.sandbox`) behind a command allowlist and a
+destructive-command blocklist. Never executes anything the allowlist rejects.
 """
 
 import os
 import shlex
-import subprocess
-from typing import Dict, List, Optional
+from typing import Dict
 
+from agents.tools import sandbox
 from brain.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -76,30 +77,9 @@ def run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> Dict[str, objec
         }
     try:
         argv = shlex.split(command)
-        proc = subprocess.run(
-            argv,
-            shell=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-        logger.info(f"[bold green]Ran command[/bold green]: {command}")
-        return {
-            "ok": proc.returncode == 0,
-            "command": command,
-            "returncode": proc.returncode,
-            "output": proc.stdout,
-            "error": proc.stderr,
-        }
-    except subprocess.TimeoutExpired:
-        logger.warning(f"[bold yellow]Command timed out[/bold yellow]: {command}")
-        return {
-            "ok": False,
-            "command": command,
-            "error": f"command timed out after {timeout}s",
-            "output": "",
-        }
-    except OSError as exc:
+        result = sandbox.run(argv, timeout=timeout, cwd=os.getcwd())
+        result["command"] = command
+        return result
+    except Exception as exc:  # noqa: BLE001 - never let the shell tool break the agent
         logger.error(f"[bold red]Command failed[/bold red]: {command} -> {exc}")
         return {"ok": False, "command": command, "error": str(exc), "output": ""}

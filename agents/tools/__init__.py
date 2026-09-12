@@ -6,7 +6,7 @@ through :func:`dispatch`, never by importing modules directly.
 
 from typing import Any, Callable, Dict
 
-from . import bash, ego_lite_browse_use, file_read, file_write, memory, skill_read
+from . import bash, ego_lite_browse_use, file_read, file_write, gmail, memory, skill_read
 
 REGISTRY: Dict[str, Dict[str, Any]] = {
     "bash": {
@@ -68,6 +68,16 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "callable": memory.semantic_search,
         "description": "Find past memories most similar to the query, ranked by meaning.",
         "parameters": {"query": str, "top_k": int},
+    },
+    "gmail_latest": {
+        "callable": gmail.gmail_latest,
+        "description": "Read recent emails from the master's Gmail inbox (read-only, IMAP).",
+        "parameters": {"limit": int, "folder": str, "unread_only": bool},
+    },
+    "gmail_search": {
+        "callable": gmail.gmail_search,
+        "description": "Search the master's Gmail inbox for emails matching an IMAP query.",
+        "parameters": {"query": str, "limit": int, "folder": str},
     },
 }
 
