@@ -6,13 +6,18 @@ through :func:`dispatch`, never by importing modules directly.
 
 from typing import Any, Callable, Dict
 
-from . import bash, ego_lite_browse_use, file_read, file_write, gmail, memory, skill_read
+from . import bash, current_date, ego_lite_browse_use, file_read, file_write, gmail, memory, skill_read
 
 REGISTRY: Dict[str, Dict[str, Any]] = {
     "bash": {
         "callable": bash.run_command,
         "description": "Run a single safe shell command with a timeout and return its output.",
         "parameters": {"command": str, "timeout": int},
+    },
+    "current_date": {
+        "callable": current_date.current_date,
+        "description": "Get today's date and the current time from the system clock. Use this for any 'what date/day/time is it' question.",
+        "parameters": {},
     },
     "file_read": {
         "callable": file_read.read_file,

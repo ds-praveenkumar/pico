@@ -91,3 +91,59 @@ def test_dashboard_shows_memory_counts(tmp_path):
 def test_dashboard_without_memory_notes_it():
     dash = Dashboard(console=_console(), provider="nvidia", model="m")
     assert "memory not wired" in _render(dash)
+
+
+def test_dashboard_streams_live_output():
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash.set_output("executor", "found 42 results in the index")
+    assert "Live output" in _render(dash)
+    assert "found 42" in _render(dash)
+
+
+def test_dashboard_output_keeps_latest_two_and_caps_len():
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    for i in range(5):
+        dash.set_output("agent", f"chunk {i}")
+    assert len(dash._output) == 2
+    assert "chunk 3" in dash._output[0]
+    long = "x" * 1000
+    dash.set_output("agent", long)
+    assert "…" in dash._output[-1]
+
+
+def test_dashboard_set_output_ignores_empty():
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash.set_output("agent", "")
+    assert dash._output == []
+
+
+def test_dashboard_footer_shows_input_line():
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash._input_active = True
+    dash._input_prompt = "pico> "
+    dash._input_buffer = "hello"
+    out = _render(dash)
+    assert "pico> hello" in out
+
+
+def test_dashboard_shows_reply_and_meta():
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash.show_reply("The answer is **42**.", "summary · tokens line")
+    out = _render(dash)
+    assert "42" in out
+    assert "summary" in out
+
+
+def test_dashboard_read_line_falls_back_when_not_a_tty(monkeypatch):
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "hello world")
+    assert dash.read_line("pico> ") == "hello world"
+    assert dash._input_active is False
+
+
+def test_dashboard_ask_yes_no_non_tty(monkeypatch):
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert dash.ask_yes_no("Approve?") is True

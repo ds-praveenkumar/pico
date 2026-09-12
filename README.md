@@ -22,8 +22,11 @@ choices so it can serve you better over time.
 - **Multi-agent delegation**: `pico` (orchestrator) plans a task and delegates to
   worker sub-agents — `executor` (safe file/shell work) and `researcher`
   (web/browser research).
-- **Supervision**: every tool call in interactive mode asks for your approval
-  before it runs. Single-shot mode refuses tool calls unless `--yes` is passed.
+- **Supervision**: in interactive mode, only higher-risk tool calls (file writes,
+  browsing, non-trivial shell commands) pause for your approval — read-only tools
+  and trivial commands (e.g. `date`, `echo`, `ls`, `git status`) run automatically
+  and are logged. In single-shot mode all tool calls are refused unless `-y` is
+  passed (supervised flow: approve/deny each call).
 - **Sandboxed shell**: `bash` runs inside a sandbox (`agents/tools/sandbox.py`) —
   a scrubbed environment with no API keys, enforced CPU/memory/process limits,
   a timeout, and a command allowlist. **pico never deletes files.**
@@ -66,11 +69,17 @@ python app.py --plain "Summarize README.md"  # no full-screen dashboard
 
 ## Live dashboard
 
-While a task runs, pico switches to a full-screen TUI showing the current plan
-(pending → running → done), live token usage (prompt/completion/total) from every
-LLM request, which agent is calling, memory sizes, and a log tail. After each
-task the completed plan, the summary, and a session token-usage line are printed
-back in the normal console.
+In the REPL, pico runs as a **full-screen chat TUI**: the dashboard owns the
+terminal for the whole session, showing the plan, live token usage, per-agent
+activity, memory, streamed LLM output, and a log tail. The **input line lives
+inside the TUI** — type your next task at the bottom `pico> ` prompt and press
+Enter. Higher-risk calls ask for your approval in the TUI too. After each task
+the answer and a session token-usage line appear on screen; `exit` quits.
+
+Pass `--plain` to use the classic console REPL instead (input in the terminal).
+
+While a task runs, the plan transitions
+(pending → running → done) like this:
 
 ```
 ╭─ status ───────────────────────────────────────────────╮

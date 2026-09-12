@@ -16,10 +16,13 @@ logger = get_logger(__name__)
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "system.md"
 
 _PLAN_INSTRUCTION = (
-    "Break the master's request into 1-3 concrete steps. Reply with ONLY a JSON list, "
+    "Break the master's request into 1-4 concrete steps. Reply with ONLY a JSON list, "
     'no prose, where each item is: {"agent": "executor" or "researcher", "task": "...one imperative task..."}. '
     "Use \"researcher\" for browsing/verifying information on the web and \"executor\" "
-    "for safe file/shell work. If the request needs no tools, reply with an empty list []."
+    "for safe file/shell work. If the request needs no tools, reply with an empty list []. "
+    "Never answer time-sensitive questions (today's date, current time) from memory: "
+    'plan an executor step such as {"agent": "executor", "task": "find out today\'s date and time with the current_date tool"} '
+    "instead of answering directly."
 )
 
 
@@ -106,10 +109,10 @@ class Pico(BaseAgent):
         self._remember(task, combined)
         return summary
 
-    def _forward_generate(self, agent_name: str) -> None:
+    def _forward_generate(self, agent_name: str, content: str = "") -> None:
         """Relay a sub-agent's hook through pico's own on_generate callback."""
         if self.on_generate is not None:
-            self.on_generate(agent_name)
+            self.on_generate(agent_name, content)
 
     def _with_plan_instruction(self, task: str) -> str:
         return f"{task}\n\nPlanning: {_PLAN_INSTRUCTION}"

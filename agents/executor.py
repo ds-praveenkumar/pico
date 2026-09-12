@@ -22,7 +22,9 @@ _EXECUTOR_SYSTEM_PROMPT = (
     "semantic_search to recall past memories by meaning. "
     "You can also read the master's email (gmail_latest / gmail_search, read-only "
     "IMAP) and run shell commands only inside the sandbox — never ask for sandbox "
-    "limits to be removed."
+    "limits to be removed. "
+    "For date/time questions, call the current_date tool and report the exact "
+    "result — never guess the date from memory."
 )
 
 

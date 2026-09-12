@@ -260,3 +260,22 @@ def test_sandbox_reports_timeout(monkeypatch, tmp_path):
 
 def test_registry_has_gmail_tools():
     assert {"gmail_latest", "gmail_search"}.issubset(TOOL_NAMES)
+
+
+def test_current_date_returns_readable_date():
+    from datetime import datetime
+    from agents.tools.current_date import current_date
+
+    result = current_date()
+    assert result["ok"] is True
+    parsed = datetime.fromisoformat(result["iso"])
+    today = datetime.now().astimezone()
+    assert parsed.date() == today.date()
+    assert "2026" in result["date"] or "2026" in result["iso"]
+
+
+def test_registry_has_current_date():
+    assert "current_date" in TOOL_NAMES
+    result = dispatch("current_date")
+    assert result["ok"] is True
+    assert result["date"]
