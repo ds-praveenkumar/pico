@@ -16,8 +16,9 @@ _RESEARCHER_SYSTEM_PROMPT = (
     "installed yet, stop and report that the skill is missing so the master can "
     "decide whether to build it. Never access unrelated or private information. "
     "Remember what you find: record useful facts with memory_remember, keep "
-    "session notes with memory_note, and capture completed research with "
-    "memory_episode."
+    "session notes with memory_note, capture completed research with "
+    "memory_episode, and store important findings with semantic_remember for "
+    "later recall by meaning."
 )
 
 
