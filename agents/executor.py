@@ -5,7 +5,6 @@ from typing import Any, Dict
 from brain.logging_setup import get_logger
 
 from agents.base_agent import BaseAgent
-from agents.tools import dispatch
 
 logger = get_logger(__name__)
 
@@ -22,7 +21,14 @@ _EXECUTOR_SYSTEM_PROMPT = (
     "semantic_search to recall past memories by meaning. "
     "You can also read the master's email (gmail_latest / gmail_search, read-only "
     "IMAP) and run shell commands only inside the sandbox — never ask for sandbox "
-    "limits to be removed."
+    "limits to be removed. "
+    "For date/time questions, call the current_date tool and report the exact "
+    "result — never guess the date from memory. "
+    "For today's news or latest-headlines questions, call the latest_news tool "
+    "and report its headlines — never invent news from memory. "
+    "When a page or task needs something only the master has — a CAPTCHA to "
+    "solve, login/OTP details, a file upload, or any personal field pico cannot "
+    "guess — stop and call ask_master instead of inventing it."
 )
 
 
@@ -34,6 +40,4 @@ class Executor(BaseAgent):
 
     def execute_tool(self, name: str, **kwargs: Any) -> Dict[str, Any]:
         """Run a single tool directly and return its raw dict result."""
-        if self.approve is not None and not self.approve(name, kwargs):
-            return {"ok": False, "error": "rejected by the master"}
-        return dispatch(name, **kwargs)
+        return self._execute(name, kwargs)

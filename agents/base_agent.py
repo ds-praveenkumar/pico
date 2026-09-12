@@ -7,6 +7,7 @@ goes through an optional supervisor (``approve``) before it executes.
 
 import json
 import os
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from brain.base_llm import BaseLLM
@@ -39,9 +40,11 @@ def openai_tool_schemas() -> List[Dict[str, Any]]:
     for name, entry in REGISTRY.items():
         properties: Dict[str, Any] = {}
         required: List[str] = []
+        optional = set(entry.get("optional", ()))
         for pname, ptype in entry["parameters"].items():
             properties[pname] = {"type": _JSON_TYPE.get(ptype, "string"), "description": pname}
-            required.append(pname)
+            if pname not in optional:
+                required.append(pname)
         schemas.append(
             {
                 "type": "function",
@@ -69,6 +72,9 @@ def _tool_call_dict(tool_call: Any) -> Dict[str, Any]:
             "arguments": tool_call.function.arguments or "{}",
         },
     }
+
+
+_MAX_RESULT_CHARS = 8000
 
 
 class BaseAgent:
@@ -107,7 +113,11 @@ class BaseAgent:
         for key in self.usage_accum:
             self.usage_accum[key] += last.get(key, 0)
         if self.on_generate is not None:
-            self.on_generate(self.name)
+            try:
+                content = self._text_of(response)
+            except Exception:  # noqa: BLE001 - content extraction must never break a run
+                content = ""
+            self.on_generate(self.name, content)
         return response
 
     @property
@@ -139,41 +149,119 @@ class BaseAgent:
         return final_text
 
     def _loop(self, task: str, messages: List[Dict[str, Any]]) -> str:
-        """Run the supervised tool-calling loop; returns the final answer text."""
+        """Run the common supervised tool-calling flow; return the final answer.
+
+        Every turn follows the same pipeline: ask the LLM, detect any tool
+        calls, extract their name and arguments, execute them (under
+        supervision), shape each result into a compact JSON tool message, and
+        append the assistant + tool turns back to ``history``. The loop repeats
+        until the LLM answers without a tool call, and the answer is returned
+        to the caller.
+        """
         if not self.llm.tools:
             self.llm.tools = self.tools
 
         for turn in range(self.max_turns):
-            response = self._generate(messages)
-            self._maybe_compact(messages)
-            message = self._message_of(response)
-            if response is None or message is None:
+            message = self._ask_turn(messages)
+            if message is None:
                 break
-            assistant_tool_calls = []
-            if message.tool_calls:
-                assistant_tool_calls = [_tool_call_dict(tc) for tc in message.tool_calls]
-            self.history.append(
-                {"role": "assistant", "content": message.content or "", "tool_calls": assistant_tool_calls}
-            )
-            if not assistant_tool_calls:
+            tool_calls = self._tool_calls_of(message)
+            self._append_assistant(messages, message.content or "", tool_calls)
+            if not tool_calls:
                 logger.info(f"[bold green]{self.name} finished[/bold green] after {turn + 1} turn(s)")
                 return message.content or ""
-
-            for tc in message.tool_calls:
-                name = tc.function.name
-                try:
-                    args = json.loads(tc.function.arguments or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                if self.approve is not None and not self.approve(name, args):
-                    logger.warning(f"[bold yellow]{self.name} tool rejected[/bold yellow]: {name}")
-                    result: Dict[str, Any] = {"ok": False, "error": "rejected by the master"}
-                else:
-                    result = dispatch(name, **args)
-                self.history.append(
-                    {"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)}
-                )
+            self._run_tool_calls(messages, tool_calls)
         return f"{self.name}: I could not finish the task within {self.max_turns} turns."
+
+    def _ask_turn(self, messages: List[Dict[str, Any]]) -> Any:
+        """Run one LLM turn and return its chat message (None on no response)."""
+        response = self._generate(messages)
+        self._maybe_compact(messages)
+        return self._message_of(response)
+
+    def _tool_calls_of(self, message: Any) -> List[Any]:
+        """Detect the tool calls on an LLM chat message."""
+        return list(getattr(message, "tool_calls", None) or [])
+
+    def _append_assistant(
+        self,
+        messages: List[Dict[str, Any]],
+        content: str,
+        tool_calls: List[Any],
+    ) -> None:
+        """Append the assistant turn (with any tool calls) to the history."""
+        messages.append(
+            {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [_tool_call_dict(tc) for tc in tool_calls],
+            }
+        )
+
+    def _run_tool_calls(self, messages: List[Dict[str, Any]], tool_calls: List[Any]) -> None:
+        """Execute every tool call and append a compact result message per call."""
+        for tool_call in tool_calls:
+            name = tool_call.function.name
+            args = self._parse_args(tool_call)
+            result = self._execute(name, args)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": self._process_result(result),
+                }
+            )
+
+    def _execute(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Approve then run one tool call; a failing call never raises."""
+        if self.approve is not None and not self.approve(name, args):
+            logger.warning(f"[bold yellow]{self.name} tool rejected[/bold yellow]: {name}")
+            return {"ok": False, "error": "rejected by the master"}
+        try:
+            return dispatch(name, **args)
+        except Exception as exc:  # noqa: BLE001 - a failing tool must not kill the loop
+            logger.error(f"[bold red]Tool crashed[/bold red]: {name} -> {exc}")
+            return {"ok": False, "error": f"tool {name} crashed: {exc}"}
+
+    def _parse_args(self, tool_call: Any) -> Dict[str, Any]:
+        """Parse a tool-call's JSON arguments, tolerating fences and stray noise."""
+        raw = getattr(getattr(tool_call, "function", None), "arguments", None)
+        cleaned = (raw or "{}").strip()
+        cleaned = re.sub(r"```(?:json)?", "", cleaned).strip()
+        if not cleaned:
+            return {}
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if not match:
+                return {}
+            try:
+                data = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return {}
+        return data if isinstance(data, dict) else {}
+
+    def _process_result(self, result: Any) -> str:
+        """Serialize a tool result into a compact, JSON-safe tool message body."""
+        def _clean(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {k: _clean(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [_clean(v) for v in value]
+            if isinstance(value, str):
+                return value if len(value) <= _MAX_RESULT_CHARS else value[:_MAX_RESULT_CHARS] + "…"
+            return value
+
+        try:
+            serialized = json.dumps(_clean(result), ensure_ascii=False)
+        except (TypeError, ValueError):
+            serialized = json.dumps(
+                {"ok": False, "error": f"tool result is not JSON-serializable: {type(result).__name__}"}
+            )
+        if len(serialized) > _MAX_RESULT_CHARS * 2:
+            serialized = serialized[:_MAX_RESULT_CHARS * 2] + "…"
+        return serialized
 
     def _maybe_compact(self, messages: List[Dict[str, Any]]) -> None:
         """Auto-compact a long-running conversation into a summary context.

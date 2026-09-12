@@ -76,6 +76,19 @@ def test_pico_unknown_subagent_skipped():
     assert pico._sub_agent("nope") is None
 
 
+def test_researcher_gets_generous_turn_budget():
+    pico = Pico(llm=SimpleNamespace(tools=None), max_turns=1)
+    assert pico.researcher.max_turns == 10
+
+
+def test_researcher_toolset_is_browser_focused():
+    researcher = Researcher(name="researcher", llm=SimpleNamespace(tools=None))
+    names = {t["function"]["name"] for t in researcher.tools}
+    assert "ego_lite_browse_use" in names
+    assert "bash" not in names
+    assert "latest_news" not in names
+
+
 def test_researcher_detects_browsable_skill():
     researcher = Researcher(name="researcher", llm=SimpleNamespace(tools=None))
     assert researcher.browsable() is True
@@ -143,9 +156,11 @@ def test_agent_accumulates_usage_and_emits_hook(tmp_path):
     llm = CountingLLM(prompt=10, completion=5)
     executor = Executor(name="executor", llm=llm, memory=Memory(dir_path=tmp_path))
     hooks = []
-    executor.on_generate = lambda name: hooks.append(name)
+    executor.on_generate = lambda name, content="": hooks.append((name, content))
     executor.run("Read README.md")
     assert len(hooks) == len(llm.calls)
+    assert all(h[0] == "executor" for h in hooks)
+    assert all(h[1] for h in hooks)
     assert llm.usage["total"] > 0
     assert executor.usage["total"] == llm.usage["total"]
 
@@ -197,10 +212,12 @@ def test_pico_usage_sum_includes_subagents(tmp_path):
 def test_pico_forwards_generate_hook(fake_llm, tmp_path):
     pico = Pico(llm=fake_llm, memory=Memory(dir_path=tmp_path))
     seen = []
-    pico.on_generate = lambda name: seen.append(name)
+    contents = []
+    pico.on_generate = lambda name, content="": (seen.append(name), contents.append(content))
     pico.run("read the README.md file and tell me what it says")
     assert "pico" in seen
     assert "executor" in seen
+    assert any(text for text in contents)
 
 
 class RecordingLLM(CountingLLM):
@@ -247,3 +264,42 @@ def test_compaction_resets_per_run(tmp_path):
     llm.all_messages.clear()
     executor.run("Read README.md")
     assert _has_compaction_summary(llm)
+
+
+def test_tool_call_result_is_appended_to_messages(tmp_path):
+    llm = RecordingLLM()
+    executor = Executor(name="executor", llm=llm, memory=Memory(dir_path=tmp_path))
+    executor.run("Read README.md")
+    roles = [m["role"] for m in llm.all_messages[-1]]
+    assert "assistant" in roles
+    assert "tool" in roles
+    tool_msg = next(m for m in llm.all_messages[-1] if m["role"] == "tool")
+    assert '"ok"' in tool_msg["content"]
+    assert tool_msg["tool_call_id"] == "call_1"
+
+
+def test_parse_args_handles_fences_and_noise():
+    executor = Executor(name="executor", llm=SimpleNamespace(tools=None))
+    clean = SimpleNamespace(function=SimpleNamespace(arguments='{"path": "a", "limit": 2}'))
+    assert executor._parse_args(clean) == {"path": "a", "limit": 2}
+    fenced = SimpleNamespace(
+        function=SimpleNamespace(arguments='```json\n{"cmd": "ls"}\n```')
+    )
+    assert executor._parse_args(fenced) == {"cmd": "ls"}
+    noisy = SimpleNamespace(function=SimpleNamespace(arguments='here you go {"a": 1} ok?'))
+    assert executor._parse_args(noisy) == {"a": 1}
+    invalid = SimpleNamespace(function=SimpleNamespace(arguments="not json at all"))
+    assert executor._parse_args(invalid) == {}
+    array = SimpleNamespace(function=SimpleNamespace(arguments="[1, 2]"))
+    assert executor._parse_args(array) == {}
+
+
+def test_process_result_truncates_and_serializes():
+    executor = Executor(name="executor", llm=SimpleNamespace(tools=None))
+    huge = "x" * 30000
+    body = executor._process_result({"ok": True, "data": huge})
+    assert len(body) < 17000
+    assert "…" in body
+    weird = {"ok": True, "blob": object()}
+    body = executor._process_result(weird)
+    assert "not JSON-serializable" in body

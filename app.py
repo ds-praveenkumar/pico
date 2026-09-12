@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import os
+import shlex
 import threading
 from typing import Any, Callable, Dict, List
 
@@ -25,12 +26,15 @@ from rich.table import Table
 
 from brain.base_llm import BaseLLM
 from brain.cerebras_client import CerebrasClient
+from brain.groq_client import GroqClient
 from brain.logging_setup import capture_logs, drained_logs, get_logger, setup_rich_logging, stop_rich_logging
 from brain.memory import Memory
 from brain.nvidia_client import NvidiaClient
 from brain.openai_client import OpenAIClient
 
 from agents.pico import Pico
+from agents.tools import ask as ask_tools
+from agents.tools import bash as bash_tool
 from dashboard import Dashboard
 
 logger = get_logger(__name__)
@@ -58,6 +62,13 @@ def build_client() -> BaseLLM:
             api_key=os.getenv("CEREBRAS_API_KEY"),
             base_url=os.getenv("CEREBRAS_BASE_URL"),
         )
+    if provider == "groq":
+        return GroqClient(
+            provider="groq",
+            model_name=os.getenv("GROQ_MODEL_ID") or os.getenv("GROK_MODEL_ID") or "",
+            api_key=os.getenv("GROQ_API_KEY") or os.getenv("GROK_API_KEY"),
+            base_url=os.getenv("GROQ_BASE_URL") or os.getenv("GROK_BASE_URL"),
+        )
     if provider == "nvidia":
         return NvidiaClient(
             provider="nvidia",
@@ -65,7 +76,7 @@ def build_client() -> BaseLLM:
             api_key=os.getenv("NVIDIA_API_KEY"),
             base_url=os.getenv("NVIDIA_BASE_URL"),
         )
-    raise ValueError(f"unknown PROVIDER={provider!r} (expected openai, nvidia, or cerebras)")
+    raise ValueError(f"unknown PROVIDER={provider!r} (expected openai, nvidia, cerebras, or groq)")
 
 
 def memory_from_env() -> Memory:
@@ -127,21 +138,122 @@ def print_plan_summary(plan: PlanView) -> None:
     console.print(Panel(plan.table(), border_style="green"))
 
 
-def interactive_approve(dashboard: Dashboard) -> Callable[[str, Dict[str, Any]], bool]:
-    """Build an approver that pauses the dashboard to ask the master on screen."""
+# Tools that read, record, or only touch pico's own sandbox — safe without asking.
+_AUTO_TOOLS = {
+    "current_date",
+    "file_read",
+    "file_write",
+    "skill_read",
+    "list_skills",
+    "memory_recall",
+    "memory_note",
+    "memory_episode",
+    "memory_remember",
+    "semantic_remember",
+    "semantic_search",
+    "gmail_latest",
+    "gmail_search",
+    "ego_lite_browse_use",
+    "latest_news",
+    "ask_master",
+}
+
+# Read-only commands that may run without asking when used alone (no redirects).
+_BASH_AUTO_FIRST = {
+    "awk",
+    "basename",
+    "cat",
+    "date",
+    "df",
+    "dirname",
+    "du",
+    "echo",
+    "env",
+    "file",
+    "find",
+    "grep",
+    "head",
+    "hostname",
+    "jq",
+    "ls",
+    "printf",
+    "pwd",
+    "readlink",
+    "realpath",
+    "rg",
+    "tail",
+    "true",
+    "false",
+    "uname",
+    "wc",
+    "which",
+    "whoami",
+}
+
+# Commands that are only auto-approved for a specific read-only invocation.
+_BASH_AUTO_ARGS: Dict[str, Callable[[List[str]], bool]] = {
+    # python must never auto-run code — version queries only.
+    "python": lambda parts: len(parts) > 1 and parts[1] in {"-V", "--version"},
+    "python3": lambda parts: len(parts) > 1 and parts[1] in {"-V", "--version"},
+    # pip is safe only for read-only listing/showing.
+    "pip": lambda parts: len(parts) > 1 and parts[1] in {"list", "show", "freeze"},
+    "pip3": lambda parts: len(parts) > 1 and parts[1] in {"list", "show", "freeze"},
+}
+
+# git subcommands that never modify the repository or the network.
+_GIT_AUTO_SUBCOMMANDS = {"blame", "branch", "diff", "log", "ls-files", "remote", "rev-parse", "show", "status", "tag"}
+
+
+def _bash_needs_approval(command: str) -> bool:
+    """Return True when a shell command should be confirmed with the master."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return True
+    if not parts or ">" in parts:  # a redirect can write a file anywhere
+        return True
+    first = os.path.basename(parts[0])
+    if first in bash_tool.DESTRUCTIVE_COMMANDS:
+        return True
+    if first in _BASH_AUTO_FIRST:
+        return False
+    if first in _BASH_AUTO_ARGS:
+        return not _BASH_AUTO_ARGS[first](parts)
+    if first == "git":
+        return len(parts) < 2 or parts[1] not in _GIT_AUTO_SUBCOMMANDS
+    return True
+
+
+def _auto_approve(name: str, args: Dict[str, Any]) -> bool:
+    """Return True when a tool call is safe enough to run without asking."""
+    if name in _AUTO_TOOLS:
+        return True
+    if name == "bash":
+        return not _bash_needs_approval(str(args.get("command", "")))
+    return False
+
+
+def smart_approve(dashboard: Dashboard) -> Callable[[str, Dict[str, Any]], bool]:
+    """Build an approver that only asks for higher-risk tool calls.
+
+    Read-only tools, project-confined writes, browsing, and trivial commands
+    (``date``, ``echo``, ``pwd``, ``ls``, ``git status``, ...) run automatically;
+    anything unclear asks the master — inside the TUI when it is live, on
+    console otherwise.
+    """
     def approve(name: str, args: Dict[str, Any]) -> bool:
-        dashboard.stop()
-        console.print(f"[bold yellow]pico wants to call[/bold yellow] {name}({args})")
-        answer = input("Approve? [y/N] ").strip().lower()
-        dashboard.start()
+        if _auto_approve(name, args):
+            logger.info("[dim]auto-approved[/dim] %s(%s)", name, args)
+            return True
+        question = f"pico wants to call {name}({args}) — approve?"
+        if dashboard.enabled and dashboard._live is not None:
+            answer = dashboard.ask_yes_no(question)
+        else:
+            console.print(f"[bold yellow]pico wants to call[/bold yellow] {name}({args})")
+            answer = input("Approve? [y/N] ").strip().lower()
         return answer in {"y", "yes"}
 
     return approve
-
-
-def reject_all(_name: str, _args: Dict[str, Any]) -> bool:
-    """Refuse every tool call (single-shot without --yes)."""
-    return False
 
 
 def run_task(
@@ -151,26 +263,54 @@ def run_task(
     plan: PlanView,
     stats: SessionStats,
     dashboard: Dashboard,
-) -> None:
-    """Run one task through pico behind the dashboard and print its results."""
-    dashboard.start()
-    capture_logs(True)
+    persistent: bool = False,
+) -> bool:
+    """Run one task through pico behind the dashboard and print its results.
+
+    Returns True on success, False if pico raised (so callers can decide how
+    to keep going). In ``persistent`` mode the Live dashboard is already running
+    and owns the screen: the answer is routed back into the TUI instead of the
+    console. Log capture and the log pump are always restored.
+    """
+    if not persistent:
+        dashboard.start()
+        capture_logs(True)
 
     pump_stop = threading.Event()
     pump = threading.Thread(target=_pump_logs, args=(dashboard, pump_stop), daemon=True)
     pump.start()
 
+    failed = False
+    reply = ""
     try:
-        reply = pico.run(task)
+        try:
+            reply = pico.run(task)
+        except Exception as exc:  # noqa: BLE001 - a provider/tool failure must not kill the app
+            failed = True
+            logger.error(f"[bold red]Task failed[/bold red]: {exc}")
     finally:
-        dashboard.stop()
-        capture_logs(False)
+        if not persistent:
+            dashboard.stop()
+            capture_logs(False)
         pump_stop.set()
         pump.join(timeout=1.0)
+
+    if failed:
+        message = "pico hit an error and could not finish the task.\nCheck the log above for details (network, provider, or tool)."
+        if persistent:
+            dashboard.show_reply(message, "task failed")
+        else:
+            console.print(Panel(message, title="[bold red]task failed[/bold red]", border_style="red"))
+        return False
+
+    if persistent:
+        dashboard.show_reply(reply, f"{task.strip()[:60]} · {stats.line(llm.usage)}")
+        return True
 
     print_reply(reply)
     print_plan_summary(plan)
     console.print(stats.line(llm.usage))
+    return True
 
 
 def _pump_logs(dashboard: Dashboard, stop: threading.Event) -> None:
@@ -191,10 +331,12 @@ def wire_handlers(
     dashboard.set_plan = _compose(dashboard.set_plan, plan.set_plan)
     dashboard.mark_step = _compose(dashboard.mark_step, plan.mark_step)
 
-    def on_generate(agent_name: str) -> None:
+    def on_generate(agent_name: str, content: str = "") -> None:
         dashboard.note_request(agent_name)
         dashboard.accumulate_usage(llm.last_generation)
         stats.note_request(agent_name)
+        if content:
+            dashboard.set_output(agent_name, content)
 
     pico.on_plan = dashboard.set_plan
     pico.on_step = dashboard.mark_step
@@ -212,7 +354,7 @@ def _compose(first: Callable, second: Callable) -> Callable:
 
 
 def run_repl(pico: Pico, llm: BaseLLM, plan: PlanView, stats: SessionStats, dashboard: Dashboard) -> None:
-    """Run the interactive supervised loop."""
+    """Run the interactive supervised loop (plain console, no full-screen TUI)."""
     console.print("[bold cyan]pico at your service.[/bold cyan] Type 'exit' to quit.")
     while True:
         try:
@@ -224,12 +366,59 @@ def run_repl(pico: Pico, llm: BaseLLM, plan: PlanView, stats: SessionStats, dash
             continue
         if task.lower() in {"exit", "quit", "q"}:
             break
+        console.print(f"[dim]running: {task}[/dim] (approvals only for higher-risk calls)")
         run_task(pico, llm, task, plan, stats, dashboard)
 
 
-def run_single(pico: Pico, llm: BaseLLM, task: str, plan: PlanView, stats: SessionStats, dashboard: Dashboard) -> None:
-    """Run one task and exit."""
-    run_task(pico, llm, task, plan, stats, dashboard)
+def run_tui_repl(
+    pico: Pico,
+    llm: BaseLLM,
+    plan: PlanView,
+    stats: SessionStats,
+    dashboard: Dashboard,
+) -> None:
+    """Run a persistent full-screen REPL: the dashboard and its input line own
+    the terminal, and the master types each task on screen."""
+    dashboard.start()
+    capture_logs(True)
+    pump_stop = threading.Event()
+    pump = threading.Thread(target=_pump_logs, args=(dashboard, pump_stop), daemon=True)
+    pump.start()
+    try:
+        while True:
+            try:
+                task = dashboard.read_line("pico> ")
+            except KeyboardInterrupt:
+                console.print()
+                break
+            except EOFError:
+                break
+            task = task.strip()
+            if not task:
+                continue
+            if task.lower() in {"exit", "quit", "q"}:
+                break
+            if task.lower() in {"clear", "cls"}:
+                plan.steps = []
+                dashboard.set_plan([])
+                dashboard.set_status("cleared")
+                continue
+            dashboard.set_status("working on your task…")
+            dashboard.set_running(True)
+            run_task(pico, llm, task, plan, stats, dashboard, persistent=True)
+            dashboard.set_running(False)
+            dashboard.set_status("ready for your next task — type below")
+    finally:
+        pump_stop.set()
+        pump.join(timeout=1.0)
+        capture_logs(False)
+        dashboard.stop()
+
+
+def run_single(pico: Pico, llm: BaseLLM, task: str, plan: PlanView, stats: SessionStats, dashboard: Dashboard) -> int:
+    """Run one task and exit; return the process exit code."""
+    ok = run_task(pico, llm, task, plan, stats, dashboard)
+    return 0 if ok else 1
 
 
 def main() -> None:
@@ -246,10 +435,22 @@ def main() -> None:
     args = parser.parse_args()
 
     load_dotenv()
-    if not os.getenv("NVIDIA_API_KEY") and not os.getenv("API_KEY") and not os.getenv("CEREBRAS_API_KEY"):
+    if (
+        not os.getenv("NVIDIA_API_KEY")
+        and not os.getenv("API_KEY")
+        and not os.getenv("CEREBRAS_API_KEY")
+        and not (os.getenv("GROQ_API_KEY") or os.getenv("GROK_API_KEY"))
+    ):
         raise RuntimeError("no provider API key found in environment (.env)")
     provider = (os.getenv("PROVIDER") or "nvidia").strip().lower()
-    model = os.getenv("NVIDIA_MODEL_ID") or os.getenv("MODEL_ID") or os.getenv("CEREBRAS_MODEL_ID") or ""
+    model = (
+        os.getenv("NVIDIA_MODEL_ID")
+        or os.getenv("MODEL_ID")
+        or os.getenv("CEREBRAS_MODEL_ID")
+        or os.getenv("GROQ_MODEL_ID")
+        or os.getenv("GROK_MODEL_ID")
+        or ""
+    )
     logger.info(
         "[bold green]Provider ready[/bold green]: %s (model=%s)", provider, model
     )
@@ -262,14 +463,20 @@ def main() -> None:
 
     plan = PlanView()
     stats = SessionStats()
-    pico = Pico(llm=llm, approve=interactive_approve(dashboard) if not args.task else (None if args.yes else reject_all), memory=memory)
+    if args.yes:
+        os.environ["PICO_AUTO_APPROVE"] = "1"
+    pico = Pico(llm=llm, approve=(None if args.yes else smart_approve(dashboard)), memory=memory)
+    ask_tools.set_master_prompt(dashboard.ask_text)
     wire_handlers(pico, llm, dashboard, plan, stats)
 
     if args.task:
-        run_single(pico, llm, args.task, plan, stats, dashboard)
-        return
+        code = run_single(pico, llm, args.task, plan, stats, dashboard)
+        raise SystemExit(code)
 
-    run_repl(pico, llm, plan, stats, dashboard)
+    if args.plain:
+        run_repl(pico, llm, plan, stats, dashboard)
+    else:
+        run_tui_repl(pico, llm, plan, stats, dashboard)
 
 
 if __name__ == "__main__":
