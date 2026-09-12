@@ -147,3 +147,28 @@ def test_dashboard_ask_yes_no_non_tty(monkeypatch):
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
     assert dash.ask_yes_no("Approve?") is True
+
+
+def test_dashboard_ask_text_prefers_read_line_when_live(monkeypatch):
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash._live = object()
+    monkeypatch.setattr(dash, "read_line", lambda prompt: "2026-08-19")
+    question = "Please solve the CAPTCHA in the browser"
+    assert dash.ask_text(question) == "2026-08-19"
+
+
+def test_dashboard_ask_text_truncates_long_question(monkeypatch):
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash._live = object()
+    captured: dict = {}
+    monkeypatch.setattr(dash, "read_line", lambda prompt: (captured.update(prompt=prompt) or "ok"))
+    dash.ask_text("q" * 500)
+    preview = captured["prompt"].partition("\n")[0]
+    assert len(preview) <= 110
+    assert preview.endswith("…")
+
+
+def test_dashboard_ask_text_falls_back_to_console_when_not_live(monkeypatch):
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "my answer")
+    assert dash.ask_text("a question") == "my answer"

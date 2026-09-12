@@ -9,7 +9,7 @@ from brain.logging_setup import get_logger
 
 from agents.base_agent import BaseAgent
 from agents.executor import Executor
-from agents.researcher import Researcher
+from agents.researcher import DEFAULT_RESEARCHER_TURNS, Researcher
 
 logger = get_logger(__name__)
 
@@ -22,7 +22,9 @@ _PLAN_INSTRUCTION = (
     "for safe file/shell work. If the request needs no tools, reply with an empty list []. "
     "Never answer time-sensitive questions (today's date, current time) from memory: "
     'plan an executor step such as {"agent": "executor", "task": "find out today\'s date and time with the current_date tool"} '
-    "instead of answering directly."
+    "instead of answering directly. For today's news / latest-headlines requests, plan an "
+    'executor step such as {"agent": "executor", "task": "fetch today\'s top news with the latest_news tool"} '
+    "instead of answering from memory."
 )
 
 
@@ -65,7 +67,8 @@ class Pico(BaseAgent):
             name="executor", llm=llm, approve=approve, max_turns=max_turns, memory=memory
         )
         self.researcher = researcher or Researcher(
-            name="researcher", llm=llm, approve=approve, max_turns=max_turns, memory=memory
+            name="researcher", llm=llm, approve=approve,
+            max_turns=max(max_turns, DEFAULT_RESEARCHER_TURNS), memory=memory
         )
         self.executor.on_generate = self._forward_generate
         self.researcher.on_generate = self._forward_generate

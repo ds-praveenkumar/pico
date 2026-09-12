@@ -194,6 +194,22 @@ class Dashboard:
         answer = self.read_line(f"{question} [y/N] ").strip().lower()
         return answer in {"y", "yes"}
 
+    def ask_text(self, question: str, max_len: int = 110) -> str:
+        """Ask the master a free-text question.
+
+        On the live TUI the question is rendered in the input footer so it stays
+        visible without corrupting the screen; outside the live view it degrades
+        to a plain console prompt.
+        """
+        if self.enabled and self._live is not None:
+            preview = question if len(question) <= max_len else question[: max_len - 1] + "…"
+            return self.read_line(f"{preview}\n[master]>\n> ").strip()
+        print(question)
+        try:
+            return input("> ").strip()
+        except EOFError:
+            return ""
+
     def _finish_input(self) -> None:
         with self._lock:
             self._input_active = False

@@ -22,7 +22,10 @@ visit and search important websites on behalf of the master, Praveen.
 ## Integration status (wired)
 - The pico tool `ego_lite_browse_use` bridges Python to the `ego-browser` CLI
   (ego-lite browser). It validates the URL, runs a Node script in the ego-lite
-  embedded runtime, and returns the page snapshot as plain text.
+  embedded runtime, and returns the page snapshot as plain text. One action per
+  call: `load` (navigate + snapshot), `click` (use a snapshot `@ref`/`loc=`),
+  `fill` (type into a field), or `select` (pick a dropdown option). The task
+  space persists between calls so later actions see the previous page's state.
 - Prerequisites on the machine: the **ego lite** browser app installed and
   running, and the `ego-browser` CLI on PATH. If the CLI is missing, pico reports
   "ego-browser CLI is not installed" and asks the master to install ego lite.
@@ -32,28 +35,34 @@ visit and search important websites on behalf of the master, Praveen.
 ## Input interface
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| url | string | yes | http(s) URL to visit. Only http/https are allowed. |
-| action | string | no | What to do on the page: `load` (default), `search`, `snapshot`, or `extract`. |
-| query | string | no | Search query or extraction hint, used with `search` / `extract`. |
+| url | string | no | http(s) URL to visit. Only http/https are allowed. Provide it on the first `load`; keep it on `click`/`fill`/`select` rounds. |
+| action | string | yes | What to do this round: `load`, `click`, `fill`, `select`, or `claim` (reclaim a handed-off tab after the master says they are done). |
+| selector | string | no | Stable selector for click/fill/select: the `loc=css:...` / `loc=role:...` / href text printed in the snapshot, a CSS selector, or `text=...`. Snapshot refs like `@5` only work in the very same call, not on pages opened later. |
+| query | string | no | Text to type (`fill`) or the option to pick (`select`). |
 
 ## Output interface
 | Parameter | Type | Description |
 | --- | --- | --- |
 | result | string | Plain-text page summary or extracted data folded into the task report. |
+| need_human | object | Present when the page needs the master: `kind` is `captcha`, `login`, or `form_input`. The browser window is open on that page and handed to the master — ask via `ask_master`, then resume the same page. |
+| paused | bool | Present (`true`) when the tab is parked under the master's control from an earlier hand-off. Do not claim it on your own — ask via `ask_master` whether the master is done with it, then resume with `action='claim'`. |
 
 ## Steps to follow
 1. **Validate** — confirm the URL is http(s) with a hostname; refuse everything else.
 2. **Check the skill** — confirm the ego-lite browser engine is available
    (`list_skills` includes `ego-lite-browser-use`). If not, stop and ask the master.
 3. **Open the browser** — start one ego-lite TaskSpace for the whole goal and
-   navigate its first Page (`p1`) to the URL.
+   navigate its first Page (`p1`) to the URL. The browser opens on the master's
+   desktop so he can watch and take over at any time.
 4. **Observe** — take one snapshot, read it, and choose the next action.
 5. **Act and extract** — follow links, fill forms, or collect content; use
    `page.evaluate()` to bulk-extract text on data-heavy pages.
 6. **Wait for the result** — use `waitForSelector`/`waitForURL` instead of fixed
    sleeps; stop as soon as the page clearly shows the result.
-7. **Report** — return only a plain-text summary to pico, never raw DOM dumps.
-8. **Clean up** — call `task.finish({ keep: [] })` exactly once when the goal is done.
+7. **Humans only**: when a CAPTCHA, login/OTP, or required form appears, call
+   `ask_master` and let the master solve it in the open browser; never guess.
+8. **Report** — return only a plain-text summary to pico, never raw DOM dumps.
+9. **Clean up** — call `task.finish({ keep: [] })` exactly once when the goal is done.
 
 ## Browser interface (after wire-up)
 Scripts run as `ego-browser nodejs` heredocs. Key APIs:
@@ -82,7 +91,8 @@ EOF
 - Only http(s) URLs, and only information the master asked for; never private or
   unrelated data.
 - Never delete files or modify the master's local project data.
-- Logins, 2FA, or device prompts: call `task.handOff()` and let the master take
-  over the browser.
+- CAPTCHAs, logins, 2FA, OTPs, required form fields, and device prompts call
+  `task.handOff()`: the window stays open under the master's control and pico
+  asks via `ask_master` instead of guessing.
 - Do not confirm one result through multiple surfaces; stop once the page shows
   the outcome.

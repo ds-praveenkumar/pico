@@ -26,12 +26,14 @@ from rich.table import Table
 
 from brain.base_llm import BaseLLM
 from brain.cerebras_client import CerebrasClient
+from brain.groq_client import GroqClient
 from brain.logging_setup import capture_logs, drained_logs, get_logger, setup_rich_logging, stop_rich_logging
 from brain.memory import Memory
 from brain.nvidia_client import NvidiaClient
 from brain.openai_client import OpenAIClient
 
 from agents.pico import Pico
+from agents.tools import ask as ask_tools
 from agents.tools import bash as bash_tool
 from dashboard import Dashboard
 
@@ -60,6 +62,13 @@ def build_client() -> BaseLLM:
             api_key=os.getenv("CEREBRAS_API_KEY"),
             base_url=os.getenv("CEREBRAS_BASE_URL"),
         )
+    if provider == "groq":
+        return GroqClient(
+            provider="groq",
+            model_name=os.getenv("GROQ_MODEL_ID") or os.getenv("GROK_MODEL_ID") or "",
+            api_key=os.getenv("GROQ_API_KEY") or os.getenv("GROK_API_KEY"),
+            base_url=os.getenv("GROQ_BASE_URL") or os.getenv("GROK_BASE_URL"),
+        )
     if provider == "nvidia":
         return NvidiaClient(
             provider="nvidia",
@@ -67,7 +76,7 @@ def build_client() -> BaseLLM:
             api_key=os.getenv("NVIDIA_API_KEY"),
             base_url=os.getenv("NVIDIA_BASE_URL"),
         )
-    raise ValueError(f"unknown PROVIDER={provider!r} (expected openai, nvidia, or cerebras)")
+    raise ValueError(f"unknown PROVIDER={provider!r} (expected openai, nvidia, cerebras, or groq)")
 
 
 def memory_from_env() -> Memory:
@@ -129,10 +138,11 @@ def print_plan_summary(plan: PlanView) -> None:
     console.print(Panel(plan.table(), border_style="green"))
 
 
-# Tools that only read or record pico's own state — safe to run without asking.
+# Tools that read, record, or only touch pico's own sandbox — safe without asking.
 _AUTO_TOOLS = {
     "current_date",
     "file_read",
+    "file_write",
     "skill_read",
     "list_skills",
     "memory_recall",
@@ -143,25 +153,33 @@ _AUTO_TOOLS = {
     "semantic_search",
     "gmail_latest",
     "gmail_search",
+    "ego_lite_browse_use",
+    "latest_news",
+    "ask_master",
 }
-
-# Tools that always need the master's explicit go-ahead.
-_ALWAYS_ASK_TOOLS = {"file_write", "ego_lite_browse_use"}
 
 # Read-only commands that may run without asking when used alone (no redirects).
 _BASH_AUTO_FIRST = {
+    "awk",
+    "basename",
     "cat",
     "date",
+    "df",
     "dirname",
+    "du",
     "echo",
     "env",
+    "file",
     "find",
     "grep",
     "head",
     "hostname",
+    "jq",
     "ls",
     "printf",
     "pwd",
+    "readlink",
+    "realpath",
     "rg",
     "tail",
     "true",
@@ -172,8 +190,18 @@ _BASH_AUTO_FIRST = {
     "whoami",
 }
 
+# Commands that are only auto-approved for a specific read-only invocation.
+_BASH_AUTO_ARGS: Dict[str, Callable[[List[str]], bool]] = {
+    # python must never auto-run code — version queries only.
+    "python": lambda parts: len(parts) > 1 and parts[1] in {"-V", "--version"},
+    "python3": lambda parts: len(parts) > 1 and parts[1] in {"-V", "--version"},
+    # pip is safe only for read-only listing/showing.
+    "pip": lambda parts: len(parts) > 1 and parts[1] in {"list", "show", "freeze"},
+    "pip3": lambda parts: len(parts) > 1 and parts[1] in {"list", "show", "freeze"},
+}
+
 # git subcommands that never modify the repository or the network.
-_GIT_AUTO_SUBCOMMANDS = {"diff", "log", "remote", "show", "status"}
+_GIT_AUTO_SUBCOMMANDS = {"blame", "branch", "diff", "log", "ls-files", "remote", "rev-parse", "show", "status", "tag"}
 
 
 def _bash_needs_approval(command: str) -> bool:
@@ -189,6 +217,8 @@ def _bash_needs_approval(command: str) -> bool:
         return True
     if first in _BASH_AUTO_FIRST:
         return False
+    if first in _BASH_AUTO_ARGS:
+        return not _BASH_AUTO_ARGS[first](parts)
     if first == "git":
         return len(parts) < 2 or parts[1] not in _GIT_AUTO_SUBCOMMANDS
     return True
@@ -198,8 +228,6 @@ def _auto_approve(name: str, args: Dict[str, Any]) -> bool:
     """Return True when a tool call is safe enough to run without asking."""
     if name in _AUTO_TOOLS:
         return True
-    if name in _ALWAYS_ASK_TOOLS:
-        return False
     if name == "bash":
         return not _bash_needs_approval(str(args.get("command", "")))
     return False
@@ -208,9 +236,10 @@ def _auto_approve(name: str, args: Dict[str, Any]) -> bool:
 def smart_approve(dashboard: Dashboard) -> Callable[[str, Dict[str, Any]], bool]:
     """Build an approver that only asks for higher-risk tool calls.
 
-    Read-only tools and trivial commands (``date``, ``echo``, ``pwd``, ``ls``,
-    ``git status``, ...) run automatically; writes, browsing, and anything
-    unclear ask the master — inside the TUI when it is live, on console otherwise.
+    Read-only tools, project-confined writes, browsing, and trivial commands
+    (``date``, ``echo``, ``pwd``, ``ls``, ``git status``, ...) run automatically;
+    anything unclear asks the master — inside the TUI when it is live, on
+    console otherwise.
     """
     def approve(name: str, args: Dict[str, Any]) -> bool:
         if _auto_approve(name, args):
@@ -225,11 +254,6 @@ def smart_approve(dashboard: Dashboard) -> Callable[[str, Dict[str, Any]], bool]
         return answer in {"y", "yes"}
 
     return approve
-
-
-def reject_all(_name: str, _args: Dict[str, Any]) -> bool:
-    """Refuse every tool call (single-shot without --yes)."""
-    return False
 
 
 def run_task(
@@ -411,10 +435,22 @@ def main() -> None:
     args = parser.parse_args()
 
     load_dotenv()
-    if not os.getenv("NVIDIA_API_KEY") and not os.getenv("API_KEY") and not os.getenv("CEREBRAS_API_KEY"):
+    if (
+        not os.getenv("NVIDIA_API_KEY")
+        and not os.getenv("API_KEY")
+        and not os.getenv("CEREBRAS_API_KEY")
+        and not (os.getenv("GROQ_API_KEY") or os.getenv("GROK_API_KEY"))
+    ):
         raise RuntimeError("no provider API key found in environment (.env)")
     provider = (os.getenv("PROVIDER") or "nvidia").strip().lower()
-    model = os.getenv("NVIDIA_MODEL_ID") or os.getenv("MODEL_ID") or os.getenv("CEREBRAS_MODEL_ID") or ""
+    model = (
+        os.getenv("NVIDIA_MODEL_ID")
+        or os.getenv("MODEL_ID")
+        or os.getenv("CEREBRAS_MODEL_ID")
+        or os.getenv("GROQ_MODEL_ID")
+        or os.getenv("GROK_MODEL_ID")
+        or ""
+    )
     logger.info(
         "[bold green]Provider ready[/bold green]: %s (model=%s)", provider, model
     )
@@ -427,7 +463,10 @@ def main() -> None:
 
     plan = PlanView()
     stats = SessionStats()
-    pico = Pico(llm=llm, approve=smart_approve(dashboard) if not args.task else (None if args.yes else reject_all), memory=memory)
+    if args.yes:
+        os.environ["PICO_AUTO_APPROVE"] = "1"
+    pico = Pico(llm=llm, approve=(None if args.yes else smart_approve(dashboard)), memory=memory)
+    ask_tools.set_master_prompt(dashboard.ask_text)
     wire_handlers(pico, llm, dashboard, plan, stats)
 
     if args.task:

@@ -8,6 +8,7 @@ import pytest
 from agents.base_agent import openai_tool_schemas
 from brain.base_llm import BaseLLM, _coerce_usage
 from brain.cerebras_client import CerebrasClient
+from brain.groq_client import GroqClient
 from brain.nvidia_client import NvidiaClient
 from brain.openai_client import OpenAIClient
 
@@ -40,6 +41,16 @@ def test_openai_tool_schemas_shape():
     assert first["function"]["parameters"]["type"] == "object"
 
 
+def test_openai_tool_schemas_mark_optional_params():
+    schemas = openai_tool_schemas()
+    by_name = {s["function"]["name"]: s for s in schemas}
+    browse_schema = by_name["ego_lite_browse_use"]
+    parameters = browse_schema["function"]["parameters"]
+    assert parameters["required"] == ["action"]
+    for name in ("url", "selector", "query"):
+        assert name in parameters["properties"]
+
+
 def test_openai_client_generate():
     client = OpenAIClient(provider="openai", model_name="m", api_key="k")
     fake = _attach_mock(client)
@@ -62,6 +73,24 @@ def test_cerebras_client_generate():
     message = client.generate([{"role": "user", "content": "hi"}])
     assert message.content == "hi"
     assert fake.chat.completions.create.called
+
+
+def test_groq_client_generate():
+    client = GroqClient(provider="groq", model_name="m", api_key="k", base_url="https://api.groq.com/openai/v1")
+    fake = _attach_mock(client)
+    message = client.generate([{"role": "user", "content": "hi"}])
+    assert message.content == "hi"
+    assert fake.chat.completions.create.called
+
+
+def test_groq_requires_api_key():
+    with pytest.raises(ValueError, match="GROQ_API_KEY"):
+        GroqClient(provider="groq", model_name="m", api_key=None)
+
+
+def test_groq_default_base_url():
+    client = GroqClient(provider="groq", model_name="m", api_key="k")
+    assert client.base_url == "https://api.groq.com/openai/v1"
 
 
 def test_cerebras_requires_api_key():

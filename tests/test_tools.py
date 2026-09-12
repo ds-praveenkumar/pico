@@ -7,13 +7,16 @@ from pathlib import Path
 import pytest
 
 from agents.tools import REGISTRY, TOOL_NAMES, dispatch
+from agents.tools import ask as ask_tools
 from agents.tools import ego_lite_browse_use, gmail as gmail_tools, memory as memory_tools
 from agents.tools import sandbox
 from agents.tools.bash import is_allowed_command, run_command
 from agents.tools.ego_lite_browse_use import (
     browse,
+    extract_action_error,
     extract_metadata,
     extract_nav_error,
+    extract_need_human,
     extract_snapshot,
 )
 from agents.tools.file_read import read_file
@@ -33,6 +36,7 @@ def test_registry_has_expected_tools():
     assert "file_write" in TOOL_NAMES
     assert "skill_read" in TOOL_NAMES
     assert "ego_lite_browse_use" in TOOL_NAMES
+    assert "ask_master" in TOOL_NAMES
     for name in TOOL_NAMES:
         assert callable(REGISTRY[name]["callable"])
 
@@ -193,6 +197,297 @@ def test_extract_helpers():
     stdout = "TITLE: T\nFINAL_URL: https://x/\nNAV_ERROR: boo\n"
     assert extract_metadata(stdout) == ("T", "https://x/")
     assert extract_nav_error(stdout) == "boo"
+
+
+def _snapshot_proc() -> subprocess.CompletedProcess:
+    stdout = (
+        "TITLE: Page\n"
+        "FINAL_URL: https://example.com/\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "root snapshot\n"
+        "---SNAPSHOT-END---\n"
+    )
+    return _fake_proc(stdout)
+
+
+def test_browse_keeps_page_open_and_reuses_space(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+
+    def fake_run(script, timeout):
+        captured["script"] = script
+        return _snapshot_proc()
+
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", fake_run)
+    result = browse("https://example.com")
+    assert result["ok"] is True
+    script = captured["script"]
+    assert 'const NAME = "pico: research"' in script
+    assert "await listTaskSpaces()" in script
+    assert "takeOverTaskSpace(existing.id)" in script
+    assert "claimTaskSpace(existing.id)" in script
+    assert "keep: ['p1']" in script
+    assert 'page.goto("https://example.com"' in script
+
+
+def test_browse_click_normalizes_refs(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+
+    def fake_run(script, timeout):
+        captured["script"] = script
+        return _snapshot_proc()
+
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", fake_run)
+    browse(url="https://example.com", action="click", selector="6")
+    assert 'page.click("@6"' in captured["script"]
+    browse(url="https://example.com", action="click", selector="ref=7")
+    assert 'page.click("@7"' in captured["script"]
+    browse(url="https://example.com", action="click", selector="loc=css:a")
+    assert 'page.click("loc=css:a"' in captured["script"]
+    browse(url="https://example.com", action="click", selector='list_item [ref=15, loc=css:a[aria-label="Services"], url=https://example.com/#]')
+    assert 'page.click("loc=css:a[aria-label=\\"Services\\"]"' in captured["script"]
+    browse(url="https://example.com", action="click", selector='anchor [ref=12, url=https://x/]')
+    assert 'page.click("@12"' in captured["script"]
+
+
+def test_browse_fill_and_select_build_script(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+
+    def fake_run(script, timeout):
+        captured["script"] = script
+        return _snapshot_proc()
+
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", fake_run)
+    browse(url="https://example.com", action="fill", selector="input[name=q]", query="Jamshedpur")
+    assert 'page.fill("input[name=q]", "Jamshedpur"' in captured["script"]
+    browse(url="https://example.com", action="select", selector="select[name=district]", query="East Singhbhum")
+    assert 'page.selectOption("select[name=district]", "East Singhbhum"' in captured["script"]
+
+
+def test_browse_survives_action_error(monkeypatch):
+    stdout = (
+        "TITLE: T\n"
+        "ACTION_ERROR: no element found with ref=99\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "still here\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse(url="https://example.com", action="click", selector="99")
+    assert result["ok"] is True
+    assert result["action_error"] == "no element found with ref=99"
+    assert result["action"] == "click"
+
+
+def test_extract_action_error():
+    assert extract_action_error("ACTION_ERROR: boom\n") == "boom"
+    assert extract_action_error("") is None
+
+
+def test_extract_need_human():
+    assert extract_need_human("NEED_HUMAN:captcha\n") == "captcha"
+    assert extract_need_human("NEED_HUMAN: login\n") == "login"
+    assert extract_need_human("") is None
+
+
+def test_browse_reports_need_human_on_captcha(monkeypatch):
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com/x\n"
+        "---SNAPSHOT-BEGIN---\n"
+        'textbox [ref=3, loc=css:input[name="captcha"]]\n'
+        "text 'Enter the characters shown to prove you are human'\n"
+        "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:captcha\n"
+    )
+    fake = _fake_proc(stdout)
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(
+        ego_lite_browse_use, "_run_browser_script",
+        lambda script, timeout: (captured.update(script=script) or fake),
+    )
+    result = browse("https://example.com")
+    assert result["ok"] is True
+    assert result["need_human"]["kind"] == "captcha"
+    assert "ask_master" in result["need_human"]["hint"]
+    assert "await task.handOff()" in captured["script"]
+    assert "kindFor" in captured["script"]
+
+
+def test_browse_reports_need_human_on_login_form(monkeypatch):
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com/login\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "textbox [ref=4, loc=css:input#email]\n"
+        "text 'Password'\n"
+        "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:login\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com/login")
+    assert result["ok"] is True
+    assert result["need_human"]["kind"] == "login"
+
+
+def test_browse_reports_paused_when_master_owns_space(monkeypatch):
+    stdout = "SESSION_PAUSED: the master currently owns this task space; browser commands are paused.\n"
+    fake = _fake_proc(stdout)
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(
+        ego_lite_browse_use, "_run_browser_script",
+        lambda script, timeout: (captured.update(script=script) or fake),
+    )
+    result = browse("https://example.com")
+    assert result["ok"] is False
+    assert result.get("paused") is True
+    assert "action='claim'" in result["hint"]
+    assert "existing.ownership === 'user'" in captured["script"]
+    assert "if (!paused)" in captured["script"]
+
+
+def test_browse_claim_action_resumes_master_owned_space(monkeypatch):
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com/after\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "heading\n  text 'After'\n"
+        "---SNAPSHOT-END---\n"
+        "CLAIMED:true\n"
+    )
+    fake = _fake_proc(stdout)
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(
+        ego_lite_browse_use, "_run_browser_script",
+        lambda script, timeout: (captured.update(script=script) or fake),
+    )
+    result = browse("https://example.com/after", action="claim")
+    assert result["ok"] is True
+    assert result.get("claimed") is True
+    assert "existing.ownership === 'user' || CLAIM_ROUND" in captured["script"]
+    assert "claimTaskSpace(existing.id)" in captured["script"]
+    assert "CLAIM_ROUND" in captured["script"]
+
+
+def test_extract_session_paused():
+    from agents.tools.ego_lite_browse_use import extract_session_paused
+
+    assert "parked" in extract_session_paused("SESSION_PAUSED: tab parked under master\n")
+    assert extract_session_paused("TITLE: x\n") is None
+
+
+def test_raise_ego_lite_window_on_macos(monkeypatch):
+    from agents.tools.ego_lite_browse_use import _raise_ego_lite_window
+
+    ran: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(ego_lite_browse_use.shutil, "which", lambda _: "/usr/bin/osascript")
+    monkeypatch.setattr(
+        ego_lite_browse_use.subprocess, "run",
+        lambda *a, **kw: ran.update(args=a, kwargs=kw) or None,
+    )
+    assert _raise_ego_lite_window() is True
+    assert 'tell application "ego lite" to activate' in ran["args"][0][2]
+
+
+def test_raise_ego_lite_window_noop_off_macos(monkeypatch):
+    from agents.tools.ego_lite_browse_use import _raise_ego_lite_window
+
+    monkeypatch.setattr(ego_lite_browse_use.platform, "system", lambda: "Linux")
+    assert _raise_ego_lite_window() is False
+
+
+def test_browse_raises_window_on_need_human(monkeypatch):
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com/captcha\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'Verify you are human'\n"
+        "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:captcha\n"
+    )
+    fake = _fake_proc(stdout)
+    raised: dict = {"calls": 0}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    monkeypatch.setattr(ego_lite_browse_use, "_raise_ego_lite_window", lambda: raised.update(calls=raised["calls"] + 1) or True)
+    result = browse("https://example.com/captcha")
+    assert result["need_human"]["kind"] == "captcha"
+    assert raised["calls"] == 1
+
+
+def test_browse_raises_window_on_loaded_page(monkeypatch):
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com/\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'Hello'\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    raised: dict = {"calls": 0}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    monkeypatch.setattr(ego_lite_browse_use, "_raise_ego_lite_window", lambda: raised.update(calls=raised["calls"] + 1) or True)
+    result = browse("https://example.com")
+    assert result["ok"] is True
+    assert raised["calls"] == 1
+
+
+def test_ask_master_returns_answer(monkeypatch):
+    monkeypatch.delenv("PICO_AUTO_APPROVE", raising=False)
+    monkeypatch.setattr(ask_tools.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *_: "I solved it")
+    result = ask_tools.ask_master("Please solve the CAPTCHA")
+    assert result["ok"] is True
+    assert result["answer"] == "I solved it"
+
+
+def test_ask_master_unattended_does_not_prompt(monkeypatch):
+    monkeypatch.delenv("PICO_AUTO_APPROVE", raising=False)
+    monkeypatch.setattr(ask_tools.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda *_: (_ for _ in ()).throw(AssertionError("must not prompt")))
+    result = ask_tools.ask_master("Please solve the CAPTCHA")
+    assert result["ok"] is False
+    assert result["answer"] == ask_tools.UNATTENDED_ANSWER
+
+
+def test_ask_master_auto_approve_returns_sentinel(monkeypatch):
+    monkeypatch.setenv("PICO_AUTO_APPROVE", "1")
+    monkeypatch.setattr("builtins.input", lambda *_: (_ for _ in ()).throw(AssertionError("must not prompt")))
+    result = ask_tools.ask_master("Please solve the CAPTCHA")
+    assert result["ok"] is False
+    assert result["answer"] == ask_tools.UNATTENDED_ANSWER
+
+
+def test_ask_master_uses_installed_handler(monkeypatch):
+    monkeypatch.delenv("PICO_AUTO_APPROVE", raising=False)
+    monkeypatch.setattr(ask_tools.sys.stdin, "isatty", lambda: True)
+    seen: dict = {}
+    ask_tools.set_master_prompt(lambda question: (seen.update(question=question) or "done in the browser"))
+    try:
+        result = ask_tools.ask_master("Please solve the CAPTCHA then confirm")
+        assert seen["question"] == "pico needs the master: Please solve the CAPTCHA then confirm"
+        assert result["ok"] is True
+        assert result["answer"] == "done in the browser"
+    finally:
+        ask_tools.set_master_prompt(None)
+
+
+def test_extract_session_error():
+    from agents.tools.ego_lite_browse_use import extract_session_error
+
+    assert extract_session_error("SESSION_ERROR: could not claim\n") == "could not claim"
+    assert extract_session_error("") is None
 
 
 def test_registry_has_memory_tools():

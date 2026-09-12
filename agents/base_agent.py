@@ -40,9 +40,11 @@ def openai_tool_schemas() -> List[Dict[str, Any]]:
     for name, entry in REGISTRY.items():
         properties: Dict[str, Any] = {}
         required: List[str] = []
+        optional = set(entry.get("optional", ()))
         for pname, ptype in entry["parameters"].items():
             properties[pname] = {"type": _JSON_TYPE.get(ptype, "string"), "description": pname}
-            required.append(pname)
+            if pname not in optional:
+                required.append(pname)
         schemas.append(
             {
                 "type": "function",
@@ -147,54 +149,79 @@ class BaseAgent:
         return final_text
 
     def _loop(self, task: str, messages: List[Dict[str, Any]]) -> str:
-        """Run the supervised tool-calling loop; returns the final answer text.
+        """Run the common supervised tool-calling flow; return the final answer.
 
-        Each turn: ask the LLM, detect any tool calls, parse their arguments,
-        run the tools (under supervision), process the results into compact
-        JSON tool messages, append them back to ``messages``, and loop until
-        the LLM answers without a tool call.
+        Every turn follows the same pipeline: ask the LLM, detect any tool
+        calls, extract their name and arguments, execute them (under
+        supervision), shape each result into a compact JSON tool message, and
+        append the assistant + tool turns back to ``history``. The loop repeats
+        until the LLM answers without a tool call, and the answer is returned
+        to the caller.
         """
         if not self.llm.tools:
             self.llm.tools = self.tools
 
         for turn in range(self.max_turns):
-            response = self._generate(messages)
-            self._maybe_compact(messages)
-            message = self._message_of(response)
-            if response is None or message is None:
+            message = self._ask_turn(messages)
+            if message is None:
                 break
-            tool_calls = list(getattr(message, "tool_calls", None) or [])
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": message.content or "",
-                    "tool_calls": [_tool_call_dict(tc) for tc in tool_calls],
-                }
-            )
+            tool_calls = self._tool_calls_of(message)
+            self._append_assistant(messages, message.content or "", tool_calls)
             if not tool_calls:
                 logger.info(f"[bold green]{self.name} finished[/bold green] after {turn + 1} turn(s)")
                 return message.content or ""
-
-            for tc in tool_calls:
-                name = tc.function.name
-                args: Dict[str, Any] = self._parse_args(tc)
-                if self.approve is not None and not self.approve(name, args):
-                    logger.warning(f"[bold yellow]{self.name} tool rejected[/bold yellow]: {name}")
-                    result: Dict[str, Any] = {"ok": False, "error": "rejected by the master"}
-                else:
-                    try:
-                        result = dispatch(name, **args)
-                    except Exception as exc:  # noqa: BLE001 - a failing tool must not kill the loop
-                        logger.error(f"[bold red]Tool crashed[/bold red]: {name} -> {exc}")
-                        result = {"ok": False, "error": f"tool {name} crashed: {exc}"}
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": self._process_result(result),
-                    }
-                )
+            self._run_tool_calls(messages, tool_calls)
         return f"{self.name}: I could not finish the task within {self.max_turns} turns."
+
+    def _ask_turn(self, messages: List[Dict[str, Any]]) -> Any:
+        """Run one LLM turn and return its chat message (None on no response)."""
+        response = self._generate(messages)
+        self._maybe_compact(messages)
+        return self._message_of(response)
+
+    def _tool_calls_of(self, message: Any) -> List[Any]:
+        """Detect the tool calls on an LLM chat message."""
+        return list(getattr(message, "tool_calls", None) or [])
+
+    def _append_assistant(
+        self,
+        messages: List[Dict[str, Any]],
+        content: str,
+        tool_calls: List[Any],
+    ) -> None:
+        """Append the assistant turn (with any tool calls) to the history."""
+        messages.append(
+            {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [_tool_call_dict(tc) for tc in tool_calls],
+            }
+        )
+
+    def _run_tool_calls(self, messages: List[Dict[str, Any]], tool_calls: List[Any]) -> None:
+        """Execute every tool call and append a compact result message per call."""
+        for tool_call in tool_calls:
+            name = tool_call.function.name
+            args = self._parse_args(tool_call)
+            result = self._execute(name, args)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": self._process_result(result),
+                }
+            )
+
+    def _execute(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Approve then run one tool call; a failing call never raises."""
+        if self.approve is not None and not self.approve(name, args):
+            logger.warning(f"[bold yellow]{self.name} tool rejected[/bold yellow]: {name}")
+            return {"ok": False, "error": "rejected by the master"}
+        try:
+            return dispatch(name, **args)
+        except Exception as exc:  # noqa: BLE001 - a failing tool must not kill the loop
+            logger.error(f"[bold red]Tool crashed[/bold red]: {name} -> {exc}")
+            return {"ok": False, "error": f"tool {name} crashed: {exc}"}
 
     def _parse_args(self, tool_call: Any) -> Dict[str, Any]:
         """Parse a tool-call's JSON arguments, tolerating fences and stray noise."""

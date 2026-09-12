@@ -6,9 +6,14 @@ through :func:`dispatch`, never by importing modules directly.
 
 from typing import Any, Callable, Dict
 
-from . import bash, current_date, ego_lite_browse_use, file_read, file_write, gmail, memory, skill_read
+from . import ask, bash, current_date, ego_lite_browse_use, file_read, file_write, gmail, latest_news, memory, skill_read
 
 REGISTRY: Dict[str, Dict[str, Any]] = {
+    "ask_master": {
+        "callable": ask.ask_master,
+        "description": "Ask the master (Praveen) a free-text question and return their answer. Use it when a page needs something only the master has or can do — solving a CAPTCHA, providing login/OTP details, uploading a file, or any form field pico may not guess. Never invent such details.",
+        "parameters": {"question": str},
+    },
     "bash": {
         "callable": bash.run_command,
         "description": "Run a single safe shell command with a timeout and return its output.",
@@ -41,8 +46,14 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "ego_lite_browse_use": {
         "callable": ego_lite_browse_use.browse,
-        "description": "Visit a website via the ego-lite browser skill and return its page snapshot.",
-        "parameters": {"url": str, "action": str},
+        "description": "Drive the ego-lite browser on the current page. action='load' opens 'url' and snapshots it. action='click' clicks 'selector'. action='fill' types 'query' into 'selector'. action='select' picks the 'query' option in the dropdown 'selector'. action='claim' reclaims a tab handed off to the master (after they say they are done) and snapshots it. The page stays open between calls. For actions use the stable locators from the snapshot (loc=css:..., CSS, or text); snapshot refs like @5 only work in the very same call. Provide 'url' with the first load and keep it in later calls. When the page shows a CAPTCHA, login/OTP, or a required form the result includes 'need_human': stop guessing and ask the master through 'ask_master' — the browser window is open and handed to them until pico resumes this same page. When the result includes 'paused', the tab is parked under the master's control: ask through 'ask_master', then resume with action='claim'.",
+        "parameters": {"url": str, "action": str, "selector": str, "query": str},
+        "optional": ["url", "selector", "query"],
+    },
+    "latest_news": {
+        "callable": latest_news.latest_news,
+        "description": "Fetch today's top news headlines from curated public RSS feeds (Google News, BBC World, The Guardian). Use this for any 'today's news' or 'latest headlines' request.",
+        "parameters": {"limit": int},
     },
     "memory_remember": {
         "callable": memory.memory_remember,

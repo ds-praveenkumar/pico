@@ -76,6 +76,19 @@ def test_pico_unknown_subagent_skipped():
     assert pico._sub_agent("nope") is None
 
 
+def test_researcher_gets_generous_turn_budget():
+    pico = Pico(llm=SimpleNamespace(tools=None), max_turns=1)
+    assert pico.researcher.max_turns == 10
+
+
+def test_researcher_toolset_is_browser_focused():
+    researcher = Researcher(name="researcher", llm=SimpleNamespace(tools=None))
+    names = {t["function"]["name"] for t in researcher.tools}
+    assert "ego_lite_browse_use" in names
+    assert "bash" not in names
+    assert "latest_news" not in names
+
+
 def test_researcher_detects_browsable_skill():
     researcher = Researcher(name="researcher", llm=SimpleNamespace(tools=None))
     assert researcher.browsable() is True
