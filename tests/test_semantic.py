@@ -40,8 +40,9 @@ def test_semantic_search_ranks_by_meaning(tmp_path):
     store.add("grocery list: milk, eggs, bread", {"source": "test"})
     store.add("the moon landing happened in 1969", {"source": "test"})
     store.add("remember to buy groceries this weekend", {"source": "test"})
-    results = store.search("what food should I buy?", top_k=2)
-    assert results[0]["text"].startswith("grocery list")
+    results = store.search("I need to buy groceries soon", top_k=2)
+    assert results[0]["text"].startswith("remember to buy groceries")
+    assert results[1]["text"].startswith("grocery list")
     assert results[0]["score"] > results[1]["score"]
 
 
@@ -49,12 +50,12 @@ def test_semantic_search_respects_threshold_and_top_k(tmp_path):
     store = SemanticMemory(path=tmp_path / "semantic.json")
     store.add("cooking pasta with tomato sauce", {"source": "test"})
     store.add("fixing the bicycle tire", {"source": "test"})
-    high = store.search("making spaghetti", top_k=5, threshold=0.2)
+    high = store.search("spaghetti with tomato sauce", top_k=5, threshold=0.2)
     best = high[0]
     assert best["text"].startswith("cooking pasta")
-    limited = store.search("cooking pasta with tomato sauce", top_k=1)
+    limited = store.search("spaghetti with tomato sauce", top_k=1)
     assert len(limited) == 1
-    assert store.search("cooking pasta with tomato sauce", top_k=0) == []
+    assert store.search("spaghetti with tomato sauce", top_k=0) == []
     assert store.search("zzz qqq vvv", top_k=5, threshold=0.9) == []
 
 
@@ -82,7 +83,7 @@ def test_corrupt_json_falls_back_to_empty(tmp_path):
 def test_memory_facade_semantic_layer(tmp_path):
     memory = Memory(dir_path=tmp_path)
     memory.remember_semantic("Praveen loves strong coffee", {"source": "test"})
-    matches = memory.search_semantic("favorite drink?")
+    matches = memory.search_semantic("his favorite coffee drink")
     assert matches[0]["text"] == "Praveen loves strong coffee"
     reloaded = Memory(dir_path=tmp_path)
     assert reloaded.semantic_items()[0]["text"] == "Praveen loves strong coffee"

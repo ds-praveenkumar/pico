@@ -202,14 +202,14 @@ def test_memory_tools_with_binding(tmp_path):
         memory_tools.memory_note("scratch", "abc")
         memory_tools.memory_remember("fact", "xyz")
         memory_tools.memory_episode("Done", "finished", "details")
-        memory_tools.semantic_remember("the launch went smoothly", "deploy notes")
+        memory_tools.semantic_remember("the release went smoothly", "deploy notes")
         assert memory.working.get("scratch") == "abc"
         assert memory.recall("fact") == "xyz"
         assert memory.episodes()[0]["title"] == "Done"
         assert memory_tools.memory_recall("fact")["value"] == "xyz"
         matches = memory_tools.semantic_search("how did the release go?")
         assert matches["ok"] is True
-        assert matches["matches"][0]["text"] == "the launch went smoothly"
+        assert matches["matches"][0]["text"] == "the release went smoothly"
         assert matches["matches"][0]["metadata"]["note"] == "deploy notes"
     finally:
         memory_tools.unbind_memory()

@@ -28,6 +28,24 @@ class FakeLLM:
     def __init__(self):
         self.tools = None
         self.calls = []
+        self._usage = {"prompt": 0, "completion": 0, "total": 0}
+        self._last_generation = {"prompt": 0, "completion": 0, "total": 0}
+
+    @property
+    def usage(self):
+        return dict(self._usage)
+
+    @property
+    def last_generation(self):
+        return dict(self._last_generation)
+
+    def remember_usage(self, prompt=0, completion=0, total=None):
+        """Simulate a generation's token usage for a hand-rolled fake."""
+        if total is None:
+            total = prompt + completion
+        self._last_generation = {"prompt": prompt, "completion": completion, "total": total}
+        for key in self._usage:
+            self._usage[key] += self._last_generation[key]
 
     def generate(self, messages=None, **kwargs):
         self.calls.append(messages[-1]["content"])
