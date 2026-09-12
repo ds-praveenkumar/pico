@@ -19,7 +19,10 @@ _EXECUTOR_SYSTEM_PROMPT = (
     "Capture what you learn: save durable facts with memory_remember, keep quick "
     "session notes with memory_note, record valuable completed steps with "
     "memory_episode, and store memorable sentences with semantic_remember. Use "
-    "semantic_search to recall past memories by meaning."
+    "semantic_search to recall past memories by meaning. "
+    "You can also read the master's email (gmail_latest / gmail_search, read-only "
+    "IMAP) and run shell commands only inside the sandbox — never ask for sandbox "
+    "limits to be removed."
 )
 
 

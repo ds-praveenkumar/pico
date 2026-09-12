@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from agents.tools import REGISTRY, TOOL_NAMES, dispatch
-from agents.tools import ego_lite_browse_use, memory as memory_tools
+from agents.tools import ego_lite_browse_use, gmail as gmail_tools, memory as memory_tools
+from agents.tools import sandbox
 from agents.tools.bash import is_allowed_command, run_command
 from agents.tools.ego_lite_browse_use import (
     browse,
@@ -54,6 +55,11 @@ def test_bash_run_reports_output():
     assert "hello" in result["output"]
 
 
+def test_bash_runs_in_sandbox():
+    result = run_command("echo hi")
+    assert result.get("sandboxed") is True
+
+
 def test_bash_run_refuses_blocked():
     result = run_command("rm -rf /")
     assert result["ok"] is False
@@ -90,6 +96,14 @@ def test_skill_read_lists_and_loads():
     result = read_skill("ego-lite-browser-use")
     assert result["ok"] is True
     assert "ego-lite-browser-use" in result["content"]
+
+
+def test_skill_read_has_new_skills():
+    for name in ("gym-routine", "expense-planner", "gmail"):
+        assert name in list_skills()
+        result = read_skill(name)
+        assert result["ok"] is True
+        assert "## Purpose" in result["content"]
 
 
 def test_skill_read_missing():
@@ -214,3 +228,35 @@ def test_memory_tools_with_binding(tmp_path):
     finally:
         memory_tools.unbind_memory()
     assert memory_tools.memory_remember("a", "b")["ok"] is False
+
+
+def test_sandbox_env_scrubs_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "sk-live-secret")
+    monkeypatch.setenv("GMAIL_IMAP_PASSWORD", "app-password")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    env = sandbox.sandboxed_env(str(tmp_path))
+    assert "sk-live-secret" not in str(env)
+    assert "app-password" not in str(env)
+    assert "/usr/bin" in env["PATH"]
+    assert env["HOME"] == str(tmp_path)
+
+
+def test_sandbox_runs_command(tmp_path):
+    result = sandbox.run(["echo", "sandboxed"], cwd=str(tmp_path))
+    assert result["ok"] is True
+    assert "sandboxed" in result["output"]
+    assert result["sandboxed"] is True
+
+
+def test_sandbox_reports_timeout(monkeypatch, tmp_path):
+    def raiser(_command, **_kwargs):
+        raise subprocess.TimeoutExpired(["sleep"], 1)
+
+    monkeypatch.setattr(sandbox.subprocess, "run", raiser)
+    result = sandbox.run(["sleep", "100"], timeout=1, cwd=str(tmp_path))
+    assert result["ok"] is False
+    assert "timed out" in result["error"]
+
+
+def test_registry_has_gmail_tools():
+    assert {"gmail_latest", "gmail_search"}.issubset(TOOL_NAMES)

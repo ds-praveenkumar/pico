@@ -123,3 +123,127 @@ def test_pico_records_whole_task_episode(fake_llm, tmp_path):
     pico = Pico(llm=fake_llm, memory=memory)
     pico.run("read the README.md file and tell me what it says")
     assert any("read the README.md file" in e["title"] for e in memory.episodes())
+
+
+class CountingLLM(FakeLLM):
+    """FakeLLM that reports fixed token usage per generated response."""
+
+    def __init__(self, prompt=10, completion=5):
+        super().__init__()
+        self.prompt = prompt
+        self.completion = completion
+
+    def generate(self, messages=None, **kwargs):
+        response = super().generate(messages=messages, **kwargs)
+        self.remember_usage(prompt=self.prompt, completion=self.completion)
+        return response
+
+
+def test_agent_accumulates_usage_and_emits_hook(tmp_path):
+    llm = CountingLLM(prompt=10, completion=5)
+    executor = Executor(name="executor", llm=llm, memory=Memory(dir_path=tmp_path))
+    hooks = []
+    executor.on_generate = lambda name: hooks.append(name)
+    executor.run("Read README.md")
+    assert len(hooks) == len(llm.calls)
+    assert llm.usage["total"] > 0
+    assert executor.usage["total"] == llm.usage["total"]
+
+
+def test_usage_reset_isolates_agents():
+    executor = Executor(name="executor", llm=CountingLLM())
+    researcher = Researcher(name="researcher", llm=CountingLLM())
+    assert executor.usage == {"prompt": 0, "completion": 0, "total": 0}
+    assert researcher.usage["total"] == 0
+
+
+def test_pico_reports_plan_and_step_hooks(fake_llm, tmp_path):
+    pico = Pico(llm=fake_llm, memory=Memory(dir_path=tmp_path))
+    plans, steps = [], []
+    pico.on_plan = lambda steps_plan: plans.append(steps_plan)
+    pico.on_step = lambda *args: steps.append(args)
+    pico.run("read the README.md file and tell me what it says")
+    assert len(plans) == 1 and len(plans[0]) == 1
+    assert steps[0][1] == "running"
+    assert steps[-1][1] == "done"
+    assert any(isinstance(s, tuple) and s[2] for s in steps)
+
+
+def test_pico_step_failure_reported(fake_llm):
+    class FailingAgent:
+        name = "failing"
+
+        def run(self, _task):
+            raise RuntimeError("boom")
+
+    pico = Pico(llm=fake_llm)
+    pico._sub_agent = lambda name: FailingAgent() if name == "executor" else None
+    steps = []
+    pico.on_plan = lambda _p: None
+    pico.on_step = lambda *a: steps.append(a)
+    out = pico.run("read the README.md file and tell me what it says")
+    assert steps[-1][1] == "failed"
+    assert "Report:" in out
+
+
+def test_pico_usage_sum_includes_subagents(tmp_path):
+    llm = CountingLLM()
+    pico = Pico(llm=llm, memory=Memory(dir_path=tmp_path))
+    pico.run("read the README.md file and tell me what it says")
+    assert pico.usage["total"] == llm.usage["total"]
+    assert pico.usage["total"] > 0
+
+
+def test_pico_forwards_generate_hook(fake_llm, tmp_path):
+    pico = Pico(llm=fake_llm, memory=Memory(dir_path=tmp_path))
+    seen = []
+    pico.on_generate = lambda name: seen.append(name)
+    pico.run("read the README.md file and tell me what it says")
+    assert "pico" in seen
+    assert "executor" in seen
+
+
+class RecordingLLM(CountingLLM):
+    """CountingLLM that also snapshots every message list it is given."""
+
+    def __init__(self):
+        super().__init__()
+        self.all_messages = []
+
+    def generate(self, messages=None, **kwargs):
+        if messages:
+            self.all_messages.append([dict(m) for m in messages])
+        return super().generate(messages=messages, **kwargs)
+
+
+def _has_compaction_summary(llm: RecordingLLM) -> bool:
+    for messages in llm.all_messages:
+        if any("## Compaction summary" in str(m.get("content", "")) for m in messages):
+            return True
+    return False
+
+
+def test_no_compaction_under_threshold(tmp_path):
+    llm = RecordingLLM()
+    executor = Executor(name="executor", llm=llm, memory=Memory(dir_path=tmp_path))
+    executor.run("Read README.md")
+    assert not _has_compaction_summary(llm)
+
+
+def test_compaction_folds_history_above_threshold(tmp_path):
+    llm = RecordingLLM()
+    executor = Executor(name="executor", llm=llm, memory=Memory(dir_path=tmp_path))
+    executor.compaction_threshold = 5
+    out = executor.run("Read README.md")
+    assert _has_compaction_summary(llm)
+    assert "tool task done" in out
+
+
+def test_compaction_resets_per_run(tmp_path):
+    llm = RecordingLLM()
+    executor = Executor(name="executor", llm=llm, memory=Memory(dir_path=tmp_path))
+    executor.compaction_threshold = 5
+    executor.run("Read README.md")
+    llm.all_messages.clear()
+    executor.run("Read README.md")
+    assert _has_compaction_summary(llm)

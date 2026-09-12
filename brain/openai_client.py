@@ -37,6 +37,7 @@ class OpenAIClient(BaseLLM):
             params["tools"] = self.tools
         logger.debug(f"generate called with messages={messages} kwargs={kwargs}")
         response = self.client.chat.completions.create(**params, **kwargs)
+        self.record_usage(getattr(response, "usage", None))
         content = response.choices[0].message
         logger.info(f"[bold green]Generate ok[/bold green]: provider={self.provider} model={self.model_name}")
         return content   

@@ -1,0 +1,59 @@
+---
+name: expense-planner
+description: >-
+  Track and plan the master's personal expenses — monthly budgets by category,
+  spend tracking, and simple forecasts. Load this skill whenever pico needs to
+  plan a budget, categorize spending, or review where money goes.
+version: 1.0.0
+type: skill
+---
+# Expense Planner
+
+## Purpose
+This skill helps pico act as a careful personal budget planner for the master,
+Praveen. It builds a monthly plan from income and fixed costs, tracks spending by
+category, and forecasts — always from numbers the master provides.
+
+## When to use
+- The master asks to plan a budget or set spending limits.
+- Categorizing or reviewing recent expenses (from an export or typed amounts).
+- A savings goal needs a plan (how much, by when, per month).
+
+## Input interface
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| income | number | no | Monthly take-home income. |
+| fixed_costs | mapping | no | Known fixed costs (rent, subscriptions, loan, etc.) by category. |
+| expenses | list | no | Recent expenses as `{amount, category, date, note}` items. |
+| goal | string | no | Savings target or budget constraint, e.g. "save 500/month". |
+
+## Output interface
+| Parameter | Type | Description |
+| --- | --- | --- |
+| budget | string | Line-item monthly budget per category. |
+| breakdown | string | Actual vs planned spend, per category. |
+| forecast | string | Projection of this month's total and savings gap. |
+
+## Steps to follow
+1. **Gather numbers from the master** — never guess income or big expenses.
+2. **Separate fixed vs variable** — split the budget into bills (fixed) and the
+   rest (food, transport, fun, savings).
+3. **Build categories** — a few clear buckets, ordered by importance.
+4. **Compare actuals** — total expenses per category and flag overruns.
+5. **Forecast** — project the current month from the spend so far and the days left.
+6. **Suggest, never decide** — propose adjustments, keep the master in control.
+7. **Keep notes** — remember the active budget and goals with `memory_remember`.
+
+## Budgeting rules (safely)
+- Fixed costs first, savings second, then variable spend.
+- A reasonable rule of thumb: 50/30/20 (needs/wants/savings) unless the master
+  already has a different plan.
+- Flag overspending early, with the amount and the category, not blame.
+
+## Safety rules (non-negotiable)
+- pico only works from numbers the master provides or explicitly approves.
+- Never access bank accounts, statements, or anything connected to money that
+  the master did not give pico.
+- No investment or debt advice presented as fact; recommend a professional when
+  appropriate.
+- Expense data stays on the master's machine in pico's long-term memory notes.

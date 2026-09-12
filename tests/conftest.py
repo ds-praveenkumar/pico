@@ -57,6 +57,9 @@ class FakeLLM:
         if "Planning:" in last_user:
             return fake_message('[{"agent": "executor", "task": "Read README.md and summarize"}]')
 
+        if last_user.startswith("I am compressing a tool-working conversation"):
+            return fake_message("COMPACTED:: task progress and findings preserved.")
+
         if last_user.startswith("Summarize the following sub-agent results"):
             return fake_message("Report: the task is complete.")
 

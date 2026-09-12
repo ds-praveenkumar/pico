@@ -24,9 +24,21 @@ choices so it can serve you better over time.
   (web/browser research).
 - **Supervision**: every tool call in interactive mode asks for your approval
   before it runs. Single-shot mode refuses tool calls unless `--yes` is passed.
+- **Sandboxed shell**: `bash` runs inside a sandbox (`agents/tools/sandbox.py`) —
+  a scrubbed environment with no API keys, enforced CPU/memory/process limits,
+  a timeout, and a command allowlist. **pico never deletes files.**
 - **Safe tools**: command allowlist + destructive-command blocklist
   (`bash`), path-confined reads/writes (`file_read`/`file_write`), skill reader,
-  and a browser-automation stub (`ego_lite_browse_use`). **pico never deletes files.**
+  browser automation through ego-lite (`ego_lite_browse_use`), and read-only
+  Gmail over IMAP (`gmail_latest` / `gmail_search`).
+- **Gmail access**: pico reads your inbox (latest/unread/search) over IMAP using
+  the stdlib — read-only, never deletes or modifies email. Configure `GMAIL_IMAP_USER`
+  and `GMAIL_IMAP_PASSWORD` (an **app password**) in `.env`.
+- **Skills**: declarative YAML skills teach pico domain workflows — browser use,
+  Gmail, **gym routines**, and **expense planning**.
+- **Auto-compaction**: long tool-loop conversations are folded into a one-call
+  summary when they cross `PICO_COMPACTION_TOKENS` (default 24000), so the context
+  window never blows up mid-task.
 - **Growing memory**: pico keeps working memory (session scratchpad), episodic
   memory (a log of completed tasks), and long-term memory (facts and preferences),
   persisted under `~/.pico` (override with `PICO_MEMORY_PATH`). On top of that it
@@ -73,6 +85,11 @@ MODEL_ID=...  API_KEY=...       # openai
 NVIDIA_MODEL_ID / NVIDIA_API_KEY / NVIDIA_BASE_URL   # nvidia
 CEREBRAS_MODEL_ID / CEREBRAS_API_KEY / CEREBRAS_BASE_URL  # cerebras
 LOG_LEVEL=INFO                  # optional
+PICO_MEMORY_PATH=~/.pico        # optional memory directory
+PICO_COMPACTION_TOKENS=24000    # optional auto-compaction threshold
+GMAIL_IMAP_USER=you@gmail.com   # Gmail access (read-only IMAP)
+GMAIL_IMAP_PASSWORD=xxxx        # an app password, NOT your account password
+GMAIL_IMAP_HOST=imap.gmail.com  # optional
 ```
 
 Never commit `.env` — it is git-ignored.
