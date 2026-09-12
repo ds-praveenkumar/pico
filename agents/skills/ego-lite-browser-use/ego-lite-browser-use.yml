@@ -1,0 +1,88 @@
+---
+name: ego-lite-browser-use
+description: >-
+  Visit, search, and operate important websites with the ego-lite browser
+  (ego-browser, a Chromium automation engine). Load this skill whenever pico
+  needs to browse a URL, search the web, read a page, fill a form, or capture
+  page output.
+version: 1.0.0
+type: skill
+---
+# Ego-lite Browser Use
+
+## Purpose
+This skill teaches pico's researcher how to drive the ego-lite browser so it can
+visit and search important websites on behalf of the master, Praveen.
+
+## When to use
+- The master asks pico to open, search, or check a website.
+- A task needs data that exists only behind a browser (login-gated or JS-heavy pages).
+- Researching latest news, status pages, product pages, or documentation.
+
+## Integration status (wired)
+- The pico tool `ego_lite_browse_use` bridges Python to the `ego-browser` CLI
+  (ego-lite browser). It validates the URL, runs a Node script in the ego-lite
+  embedded runtime, and returns the page snapshot as plain text.
+- Prerequisites on the machine: the **ego lite** browser app installed and
+  running, and the `ego-browser` CLI on PATH. If the CLI is missing, pico reports
+  "ego-browser CLI is not installed" and asks the master to install ego lite.
+- The researcher selects this skill via the `skill_read` tool and drives the
+  browser through the `ego_lite_browse_use` tool in its tool loop.
+
+## Input interface
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| url | string | yes | http(s) URL to visit. Only http/https are allowed. |
+| action | string | no | What to do on the page: `load` (default), `search`, `snapshot`, or `extract`. |
+| query | string | no | Search query or extraction hint, used with `search` / `extract`. |
+
+## Output interface
+| Parameter | Type | Description |
+| --- | --- | --- |
+| result | string | Plain-text page summary or extracted data folded into the task report. |
+
+## Steps to follow
+1. **Validate** — confirm the URL is http(s) with a hostname; refuse everything else.
+2. **Check the skill** — confirm the ego-lite browser engine is available
+   (`list_skills` includes `ego-lite-browser-use`). If not, stop and ask the master.
+3. **Open the browser** — start one ego-lite TaskSpace for the whole goal and
+   navigate its first Page (`p1`) to the URL.
+4. **Observe** — take one snapshot, read it, and choose the next action.
+5. **Act and extract** — follow links, fill forms, or collect content; use
+   `page.evaluate()` to bulk-extract text on data-heavy pages.
+6. **Wait for the result** — use `waitForSelector`/`waitForURL` instead of fixed
+   sleeps; stop as soon as the page clearly shows the result.
+7. **Report** — return only a plain-text summary to pico, never raw DOM dumps.
+8. **Clean up** — call `task.finish({ keep: [] })` exactly once when the goal is done.
+
+## Browser interface (after wire-up)
+Scripts run as `ego-browser nodejs` heredocs. Key APIs:
+- `taskSpace(name)` — create one space per goal; `task.page("p1")` is the first Page.
+- `page.goto(url)`, `page.title()`, `page.url()`, `page.snapshot()`.
+- `page.click(selector)` and `page.fill(selector, value)` for forms.
+- `page.waitForSelector(selector)` for expected state; `page.evaluate(fn, arg)`
+  for bulk extraction.
+- `await task.finish({ keep: [] })` closes the space when the task succeeds.
+
+Full API details live in the ego-browser skill (`~/.agents/skills/ego-browser/SKILL.md`).
+
+## Example (post wire-up)
+```bash
+ego-browser nodejs <<'EOF'
+const task = await taskSpace("check example site");
+const page = task.page("p1");
+await page.goto("https://example.com");
+console.log(await page.title());
+console.log(await page.snapshot());
+await task.finish({ keep: [] });
+EOF
+```
+
+## Safety rules (non-negotiable)
+- Only http(s) URLs, and only information the master asked for; never private or
+  unrelated data.
+- Never delete files or modify the master's local project data.
+- Logins, 2FA, or device prompts: call `task.handOff()` and let the master take
+  over the browser.
+- Do not confirm one result through multiple surfaces; stop once the page shows
+  the outcome.
