@@ -6,6 +6,7 @@ goes through an optional supervisor (``approve``) before it executes.
 """
 
 import json
+import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from brain.base_llm import BaseLLM
@@ -17,8 +18,17 @@ from agents.tools.memory import bind_memory, unbind_memory
 logger = get_logger(__name__)
 
 DEFAULT_MAX_TURNS = 6
+DEFAULT_COMPACTION_TOKENS = 24000
 
 _ZERO_USAGE = {"prompt": 0, "completion": 0, "total": 0}
+
+_COMPACT_SENTINEL = "Compaction summary of earlier conversation"
+_COMPACT_PROMPT = (
+    "I am compressing a tool-working conversation into concise notes for a "
+    "continuation. Preserve: the original task, decisions made, tool results "
+    "already obtained, key findings, and what still remains to do. "
+    "Output only the notes, no preamble.\n\nConversation so far:\n"
+)
 
 _JSON_TYPE = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
@@ -82,6 +92,9 @@ class BaseAgent:
         self.history: List[Dict[str, Any]] = []
         self.usage_accum: Dict[str, int] = dict(_ZERO_USAGE)
         self.on_generate: Optional[Callable[[str], None]] = None
+        self.compaction_threshold = int(os.getenv("PICO_COMPACTION_TOKENS", DEFAULT_COMPACTION_TOKENS))
+        self._run_tokens = 0
+        self._compacted_once = False
 
     def system_instructions(self) -> str:
         """Return this agent's system prompt."""
@@ -116,6 +129,8 @@ class BaseAgent:
         self.history = messages
 
         bind_memory(self.memory)
+        self._run_tokens = 0
+        self._compacted_once = False
         try:
             final_text = self._loop(task, messages)
         finally:
@@ -130,6 +145,7 @@ class BaseAgent:
 
         for turn in range(self.max_turns):
             response = self._generate(messages)
+            self._maybe_compact(messages)
             message = self._message_of(response)
             if response is None or message is None:
                 break
@@ -159,6 +175,42 @@ class BaseAgent:
                 )
         return f"{self.name}: I could not finish the task within {self.max_turns} turns."
 
+    def _maybe_compact(self, messages: List[Dict[str, Any]]) -> None:
+        """Auto-compact a long-running conversation into a summary context.
+
+        Once the tokens spent on this task cross ``compaction_threshold`` the
+        conversation is folded into a compact system summary (via one extra LLM
+        call) and the loop continues from there. Runs at most once per task.
+        """
+        self._run_tokens += getattr(self.llm, "last_generation", _ZERO_USAGE).get("total", 0)
+        if self._compacted_once or self._run_tokens <= self.compaction_threshold:
+            return
+        summary = self._compact_summary(messages)
+        system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+        compacted: List[Dict[str, Any]] = [
+            {"role": "system", "content": f"{system}\n\n## {_COMPACT_SENTINEL}\n{summary}"}
+        ]
+        if messages and messages[-1].get("role") not in {"system", "tool"}:
+            compacted.append(dict(messages[-1]))
+        messages[:] = compacted
+        self._compacted_once = True
+        logger.info(f"[bold yellow]Conversation compacted[/bold yellow] after {self._run_tokens} tokens")
+
+    def _compact_summary(self, messages: List[Dict[str, Any]]) -> str:
+        """Ask the LLM to compress past turns into concise continuation notes."""
+        condensed: List[str] = []
+        for message in messages[-24:]:
+            role = message.get("role", "?")
+            content = message.get("content", "")
+            if not isinstance(content, str):
+                content = json.dumps({k: v for k, v in message.items() if k != "role"})
+            if len(content) > 600:
+                content = content[:600] + "…"
+            condensed.append(f"{role}: {content}")
+        prompt = _COMPACT_PROMPT + "\n".join(condensed)
+        response = self._generate([{"role": "user", "content": prompt}])
+        return self._text_of(response) or "(compaction notes unavailable)"
+
     def _capture_after_task(self, task: str, final_text: str) -> None:
         """Persist working + episodic memory notes for a finished task."""
         if self.memory is None:
@@ -182,3 +234,11 @@ class BaseAgent:
         if hasattr(response, "content"):
             return response
         return None
+
+    def _text_of(self, response: Any) -> str:
+        """Extract plain text from a client response."""
+        message = self._message_of(response)
+        if message is None:
+            return str(response)
+        content = getattr(message, "content", "")
+        return content if isinstance(content, str) else str(content)
