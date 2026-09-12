@@ -15,7 +15,10 @@ choices so it can serve you better over time.
 
 ## Features (v1)
 
-- **Interactive REPL** (`python app.py`) and **single-shot** mode.
+- **Interactive REPL** (`python app.py`) and **single-shot** mode, both backed by a
+  live rich dashboard that shows the running task plan, token usage, per-agent
+  activity, memory sizes, and a log tail. Use `--plain` to disable the full-screen
+  view, or `-y` to auto-approve tools in single-shot mode.
 - **Multi-agent delegation**: `pico` (orchestrator) plans a task and delegates to
   worker sub-agents — `executor` (safe file/shell work) and `researcher`
   (web/browser research).
@@ -24,10 +27,12 @@ choices so it can serve you better over time.
 - **Safe tools**: command allowlist + destructive-command blocklist
   (`bash`), path-confined reads/writes (`file_read`/`file_write`), skill reader,
   and a browser-automation stub (`ego_lite_browse_use`). **pico never deletes files.**
-- **Three-layer memory**: pico keeps working memory (session scratchpad), episodic
+- **Growing memory**: pico keeps working memory (session scratchpad), episodic
   memory (a log of completed tasks), and long-term memory (facts and preferences),
-  persisted under `~/.pico` (override with `PICO_MEMORY_PATH`). Agents capture
-  memories with the `memory_*` tools, and pico reviews its memories before each task.
+  persisted under `~/.pico` (override with `PICO_MEMORY_PATH`). On top of that it
+  stores memorable sentences in semantic memory and searches them by meaning with
+  a local vector search — no network needed. Agents capture memories with the
+  `memory_*` and `semantic_*` tools, and pico reviews its memories before each task.
 
 ## Quick start
 
@@ -44,7 +49,19 @@ python app.py          # interactive REPL
 python app.py                       # interactive REPL (asks before each tool call)
 python app.py "Summarize README.md" # single-shot; tool calls are refused by default
 python app.py "Summarize README.md" --yes  # single-shot with auto-approved tools
+python app.py --plain "Summarize README.md"  # no full-screen dashboard
 ```
+
+## Live dashboard
+
+While a task runs, pico switches to a full-screen TUI showing the current plan
+(pending → running → done), live token usage (prompt/completion/total) from every
+LLM request, which agent is calling, memory sizes, and a log tail. After each
+task the completed plan, the summary, and a session token-usage line are printed
+back in the normal console.
+
+Token accounting lives on each LLM client (`BaseLLM.usage` / `last_generation`);
+`Pico.usage` sums across the orchestrator and both sub-agents.
 
 ## Providers (via `.env`)
 

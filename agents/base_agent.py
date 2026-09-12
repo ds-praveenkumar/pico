@@ -6,7 +6,7 @@ goes through an optional supervisor (``approve``) before it executes.
 """
 
 import json
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from brain.base_llm import BaseLLM
 from brain.logging_setup import get_logger
@@ -17,6 +17,8 @@ from agents.tools.memory import bind_memory, unbind_memory
 logger = get_logger(__name__)
 
 DEFAULT_MAX_TURNS = 6
+
+_ZERO_USAGE = {"prompt": 0, "completion": 0, "total": 0}
 
 _JSON_TYPE = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
@@ -78,10 +80,27 @@ class BaseAgent:
         self.memory = memory
         self.tools = tools or openai_tool_schemas()
         self.history: List[Dict[str, Any]] = []
+        self.usage_accum: Dict[str, int] = dict(_ZERO_USAGE)
+        self.on_generate: Optional[Callable[[str], None]] = None
 
     def system_instructions(self) -> str:
         """Return this agent's system prompt."""
         return ""
+
+    def _generate(self, messages: List[Dict[str, Any]]) -> Any:
+        """Call the LLM, accumulate token usage, and emit the generate hook."""
+        response = self.llm.generate(messages=messages)
+        last = getattr(self.llm, "last_generation", _ZERO_USAGE)
+        for key in self.usage_accum:
+            self.usage_accum[key] += last.get(key, 0)
+        if self.on_generate is not None:
+            self.on_generate(self.name)
+        return response
+
+    @property
+    def usage(self) -> Dict[str, int]:
+        """Token usage accumulated on this agent's own generations."""
+        return dict(self.usage_accum)
 
     def run(self, task: str) -> str:
         """Run the tool-calling loop for a task and return the final text."""
@@ -110,7 +129,7 @@ class BaseAgent:
             self.llm.tools = self.tools
 
         for turn in range(self.max_turns):
-            response = self.llm.generate(messages=messages)
+            response = self._generate(messages)
             message = self._message_of(response)
             if response is None or message is None:
                 break

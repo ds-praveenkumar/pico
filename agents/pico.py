@@ -64,6 +64,10 @@ class Pico(BaseAgent):
         self.researcher = researcher or Researcher(
             name="researcher", llm=llm, approve=approve, max_turns=max_turns, memory=memory
         )
+        self.executor.on_generate = self._forward_generate
+        self.researcher.on_generate = self._forward_generate
+        self.on_plan: Optional[Any] = None
+        self.on_step: Optional[Any] = None
 
     def system_instructions(self) -> str:
         return _read_system_prompt()
@@ -73,23 +77,39 @@ class Pico(BaseAgent):
         steps = parse_plan(plan_text)
         if not steps:
             return self._ask(task)
+        if self.on_plan is not None:
+            self.on_plan(steps)
         combined_parts: List[str] = []
-        for step in steps:
+        for index, step in enumerate(steps):
             agent = self._sub_agent(step["agent"])
+            label = f"{step['agent']}: {step['task']}"
             if agent is None:
                 combined_parts.append(f"[{step['agent']}] unknown agent; step skipped")
+                if self.on_step is not None:
+                    self.on_step(index, "failed", label)
                 continue
             logger.info(f"[bold cyan]Delegating[/bold cyan] {step['agent']}: {step['task']}")
+            if self.on_step is not None:
+                self.on_step(index, "running", label)
             try:
                 outcome = agent.run(step["task"])
                 combined_parts.append(f"[{step['agent']}] {outcome}")
+                if self.on_step is not None:
+                    self.on_step(index, "done", label)
             except Exception as exc:  # noqa: BLE001 - a failing subtask must not kill the whole run
                 logger.error(f"[bold red]Sub-agent failed[/bold red]: {step['agent']} -> {exc}")
                 combined_parts.append(f"[{step['agent']}] failed: {exc}")
+                if self.on_step is not None:
+                    self.on_step(index, "failed", label)
         combined = "\n\n".join(combined_parts)
         summary = self._summarize(task, combined)
         self._remember(task, combined)
         return summary
+
+    def _forward_generate(self, agent_name: str) -> None:
+        """Relay a sub-agent's hook through pico's own on_generate callback."""
+        if self.on_generate is not None:
+            self.on_generate(agent_name)
 
     def _with_plan_instruction(self, task: str) -> str:
         return f"{task}\n\nPlanning: {_PLAN_INSTRUCTION}"
@@ -104,7 +124,7 @@ class Pico(BaseAgent):
                 system_prompt = f"{system_prompt}\n\n## Notes about the master\n{context}"
         messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": task})
-        response = self.llm.generate(messages=messages)
+        response = self._generate(messages)
         return self._text_of(response)
 
     def _summarize(self, task: str, combined: str) -> str:
@@ -127,6 +147,15 @@ class Pico(BaseAgent):
 
     def _sub_agent(self, name: str) -> Optional[BaseAgent]:
         return {"executor": self.executor, "researcher": self.researcher}.get(name)
+
+    @property
+    def usage(self) -> Dict[str, int]:
+        """Combined token usage across pico and both sub-agents."""
+        totals = dict(self.usage_accum)
+        for agent in (self.executor, self.researcher):
+            for key in totals:
+                totals[key] += agent.usage.get(key, 0)
+        return totals
 
     def _text_of(self, response: Any) -> str:
         if hasattr(response, "choices"):
