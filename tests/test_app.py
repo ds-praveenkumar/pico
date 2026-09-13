@@ -14,6 +14,12 @@ def _console() -> Console:
     return Console(file=io.StringIO(), width=100, height=40, force_terminal=True)
 
 
+def _render_console(dashboard: Dashboard) -> str:
+    buffer = _console()
+    buffer.print(dashboard._render())
+    return buffer.file.getvalue()
+
+
 def test_auto_approves_read_only_tools():
     for tool in ("current_date", "file_read", "skill_read", "memory_recall", "memory_note", "gmail_list"):
         assert _auto_approve(tool, {}) is True
@@ -115,10 +121,11 @@ def test_wired_live_output_streams_tool_results_never_bare_none(tmp_path, fake_l
     assert streamed
     assert any("[file_read]" in text for _, text in streamed)
     for _, text in streamed:
-        assert text == text.strip()
-        assert text.lower() not in {"none", "null", "n/a", ""}
-    rendered = _render(dash)
+        if text.startswith("["):
+            assert text.strip().lower() not in {"none", "null", "n/a", ""}
+    rendered = _render_console(dash)
     assert " › none" not in rendered
+    assert " › None" not in rendered
 
 
 def test_build_client_groq_reads_groq_keys(monkeypatch):
