@@ -11,6 +11,7 @@ from brain.cerebras_client import CerebrasClient
 from brain.groq_client import GroqClient
 from brain.nvidia_client import NvidiaClient
 from brain.openai_client import OpenAIClient
+from brain.openrouter_client import OpenRouterClient
 
 
 def _fake_response(content="hi", usage=None):
@@ -86,6 +87,24 @@ def test_groq_client_generate():
 def test_groq_requires_api_key():
     with pytest.raises(ValueError, match="GROQ_API_KEY"):
         GroqClient(provider="groq", model_name="m", api_key=None)
+
+
+def test_openrouter_client_generate():
+    client = OpenRouterClient(provider="openrouter", model_name="m", api_key="k")
+    fake = _attach_mock(client)
+    message = client.generate([{"role": "user", "content": "hi"}])
+    assert message.content == "hi"
+    assert fake.chat.completions.create.called
+
+
+def test_openrouter_requires_api_key():
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        OpenRouterClient(provider="openrouter", model_name="m", api_key=None)
+
+
+def test_openrouter_default_base_url():
+    client = OpenRouterClient(provider="openrouter", model_name="m", api_key="k")
+    assert client.base_url == "https://openrouter.ai/api/v1"
 
 
 def test_groq_default_base_url():

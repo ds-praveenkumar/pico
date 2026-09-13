@@ -90,10 +90,11 @@ class Researcher(BaseAgent):
         max_turns: int = 6,
         memory: Optional[Any] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        cancel_token: Optional[Any] = None,
     ) -> None:
         super().__init__(
             name=name, llm=llm, approve=approve, max_turns=max_turns, memory=memory,
-            tools=tools or _researcher_tools(),
+            tools=tools or _researcher_tools(), cancel_token=cancel_token,
         )
 
     def system_instructions(self) -> str:

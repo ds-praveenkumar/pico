@@ -27,6 +27,15 @@ DEFAULT_SOURCES: List[Dict[str, str]] = [
     {"name": "The Guardian World", "url": "https://www.theguardian.com/world/rss"},
 ]
 
+
+def _topic_source(topic: str) -> Dict[str, str]:
+    """Build a Google News topic-search feed source for ``topic``."""
+    query = urllib.parse.quote(topic.strip())
+    return {
+        "name": f"Google News ({topic.strip()})",
+        "url": f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en",
+    }
+
 ALLOWED_HOSTS = {urllib.parse.urlparse(source["url"]).netloc for source in DEFAULT_SOURCES}
 
 _urlopen = urllib.request.urlopen
@@ -101,13 +110,14 @@ def fetch_feed(url: str, timeout: int = DEFAULT_TIMEOUT) -> bytes:
     return raw[:MAX_FEED_BYTES]
 
 
-def latest_news(limit: int = DEFAULT_LIMIT) -> Dict[str, Any]:
-    """Return today's top headlines from the curated news feeds."""
+def latest_news(limit: int = DEFAULT_LIMIT, topic: str = "") -> Dict[str, Any]:
+    """Return today's top headlines, or news about ``topic`` when provided."""
     limit = max(1, min(int(limit), 10))
     today = datetime.now().astimezone().strftime("%A, %B %d, %Y")
     headlines: List[Dict[str, Any]] = []
     failed: List[str] = []
-    for source in DEFAULT_SOURCES:
+    sources = DEFAULT_SOURCES if not topic.strip() else [_topic_source(topic)]
+    for source in sources:
         name, url = source["name"], source["url"]
         try:
             raw = fetch_feed(url)
@@ -118,13 +128,20 @@ def latest_news(limit: int = DEFAULT_LIMIT) -> Dict[str, Any]:
             continue
         for item in items[:limit]:
             headlines.append({"source": name, **item})
-    loaded = len(DEFAULT_SOURCES) - len(failed)
+    loaded = len(sources) - len(failed)
     if not headlines:
-        return {"ok": False, "date": today, "error": "no news feeds could be loaded", "failed": failed}
-    logger.info(f"[bold green]Fetched latest news[/bold green]: {len(headlines)} headlines from {loaded}/{len(DEFAULT_SOURCES)} sources")
+        return {
+            "ok": False,
+            "date": today,
+            "topic": topic.strip() or None,
+            "error": "no news feeds could be loaded",
+            "failed": failed,
+        }
+    logger.info(f"[bold green]Fetched latest news[/bold green]: {len(headlines)} headlines from {loaded}/{len(sources)} sources")
     return {
         "ok": True,
         "date": today,
+        "topic": topic.strip() or None,
         "count": len(headlines),
         "headlines": headlines,
         "failed": failed,

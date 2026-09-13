@@ -1,7 +1,9 @@
 openai
 python-dotenv
 rich
+textual>=8.0.0
 pytest
+pytest-asyncio
 google-auth>=2.23.0
 google-auth-oauthlib>=1.1.0
 google-api-python-client>=2.108.0
