@@ -32,12 +32,13 @@ choices so it can serve you better over time.
   a timeout, and a command allowlist. **pico never deletes files.**
 - **Safe tools**: command allowlist + destructive-command blocklist
   (`bash`), path-confined reads/writes (`file_read`/`file_write`), skill reader,
-  browser automation through ego-lite (`ego_lite_browse_use`), and read-only
-  Gmail via OAuth (`gmail_list` / `gmail_search` / `gmail_read`).
-- **Gmail access**: pico reads your inbox (latest/unread/search) via OAuth2 —
-  read-only, never deletes or modifies email. Configure the OAuth client
-  (`GMAIL_CLIENT_SECRET_PATH`) and authorize once with
-  `python -m agents.tools.gmail_oauth`.
+  browser automation through ego-lite (`ego_lite_browse_use`), and Gmail via
+  OAuth (`gmail_list` / `gmail_search` / `gmail_read` / `gmail_send` /
+  `gmail_mark`).
+- **Gmail access**: pico reads your inbox (latest/unread/search) via OAuth2.
+  Reading runs automatically; sending and marking mail pause for your explicit
+  approval. pico never deletes email. See
+  [Gmail setup](#gmail-setup-oauth2) for the one-time authorization.
 - **Skills**: declarative YAML skills teach pico domain workflows — browser use,
   Gmail, **gym routines**, and **expense planning**.
 - **Auto-compaction**: long tool-loop conversations are folded into a one-call
@@ -128,19 +129,88 @@ Token accounting lives on each LLM client (`BaseLLM.usage` / `last_generation`);
 `PROVIDER` selects the model backend; `nvidia` is the default.
 
 ```
-PROVIDER=nvidia                 # openai | nvidia | cerebras
+PROVIDER=nvidia                 # openai | nvidia | cerebras | groq
 MODEL_ID=...  API_KEY=...       # openai
 NVIDIA_MODEL_ID / NVIDIA_API_KEY / NVIDIA_BASE_URL   # nvidia
 CEREBRAS_MODEL_ID / CEREBRAS_API_KEY / CEREBRAS_BASE_URL  # cerebras
+GROQ_MODEL_ID / GROQ_API_KEY / GROQ_BASE_URL         # groq (GROK_* accepted as fallback)
 LOG_LEVEL=INFO                  # optional
 PICO_MEMORY_PATH=~/.pico        # optional memory directory
 PICO_COMPACTION_TOKENS=24000    # optional auto-compaction threshold
 GMAIL_CLIENT_SECRET_PATH=file:///path/to/client_secret_*.json  # OAuth app
+GMAIL_CREDENTIALS_PATH=~/.agents/gmail                         # token dir (optional)
 GMAIL_IMAP_USER=you@gmail.com   # optional legacy IMAP address (superseded by OAuth)
 GMAIL_IMAP_PASSWORD=xxxx        # optional app password (superseded by OAuth)
 ```
 
 Never commit `.env` — it is git-ignored.
+
+## Gmail setup (OAuth2)
+
+pico talks to your inbox through the official Gmail API using OAuth2. You do
+this once — afterwards the token auto-refreshes and you can just ask pico to
+check your mail.
+
+### 1. Create a Google Cloud OAuth client
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/) and
+   create a project (or reuse one).
+2. Enable the **Gmail API**: *APIs & Services → Library* → search for
+   "Gmail API" → *Enable*.
+3. Configure the consent screen: *APIs & Services → OAuth consent screen* →
+   choose **External**, add an app name, and add your Gmail address under
+   **Test users**.
+4. Create the OAuth client: *APIs & Services → Credentials → Create
+   Credentials → OAuth client ID* → application type **Desktop app** →
+   *Create*.
+5. Download the generated `client_secret_*.json` file.
+
+### 2. Point pico at the client secrets
+
+Copy the file into the credentials directory as `credentials.json`, or set
+`GMAIL_CLIENT_SECRET_PATH` in `.env` (a plain path or `file://` URI both work):
+
+```
+GMAIL_CLIENT_SECRET_PATH=file:///absolute/path/to/client_secret_xxx.apps.googleusercontent.com.json
+```
+
+Resolution order when pico starts: `credentials.json` beside the token →
+`GMAIL_CLIENT_SECRET_PATH` → any `client_secret_*.json` in the credentials
+directory.
+
+### 3. Authorize once
+
+```bash
+.venv/bin/python -m agents.tools.gmail_oauth
+```
+
+A browser opens; sign in with your Google account and approve the requested
+scopes. The authorized token is saved as `token.json` in the credentials
+directory and is refreshed automatically going forward.
+
+### Where things live
+
+Files land in `~/.agents/gmail/` by default — or in the existing
+`~/.personal-assistant/gmail/` folder if you had an older setup — and you can
+override the directory with `GMAIL_CREDENTIALS_PATH`:
+
+| File | Purpose |
+| --- | --- |
+| `credentials.json` / `client_secret_*.json` | OAuth client secrets exported from Google Cloud |
+| `token.json` | Authorized access + refresh token (auto-generated, auto-refreshed) |
+
+Treat both files as secrets: they live outside the repo and must never be
+committed or logged.
+
+### What the token can do
+
+The sign-in grants three scopes — `gmail.readonly`, `gmail.send`,
+`gmail.modify`:
+
+- `gmail_list` / `gmail_search` / `gmail_read` run automatically when asked.
+- `gmail_send` (send/reply) and `gmail_mark` (read / unread / flagged) pause
+  for your explicit approval before pico acts.
+- Email is never deleted.
 
 ## Application logs
 
