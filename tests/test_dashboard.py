@@ -115,6 +115,18 @@ def test_dashboard_set_output_ignores_empty():
     dash = Dashboard(console=_console(), provider="nvidia", model="m")
     dash.set_output("agent", "")
     assert dash._output == []
+    dash.set_output("agent", "   ")
+    assert dash._output == []
+
+
+def test_dashboard_set_output_ignores_filler_tokens():
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    for filler in ("none", "null", "None", "n/a"):
+        dash.set_output("pico", filler)
+    assert dash._output == []
+    dash.set_output("executor", "[gmail_latest] {\"ok\": true, \"emails\": []}")
+    assert len(dash._output) == 1
+    assert "gmail_latest" in dash._output[0]
 
 
 def test_dashboard_footer_shows_input_line():
@@ -124,6 +136,40 @@ def test_dashboard_footer_shows_input_line():
     dash._input_buffer = "hello"
     out = _render(dash)
     assert "pico> hello" in out
+
+
+def test_dashboard_animates_while_running():
+    from dashboard import _SPINNER
+
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash._status = "executing plan…"
+    dash.set_running(True)
+    assert dash._running is True
+    assert dash._anim_thread is not None
+    assert dash._spinner_char() in _SPINNER
+    dash._frame += 1
+    assert dash._spinner_char() in _SPINNER
+    assert _SPINNER[dash._frame % len(_SPINNER)] in _render(dash)
+    assert "executing plan…" in _render(dash)
+
+
+def test_dashboard_spinner_clears_when_idle():
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash.set_running(True)
+    char = dash._spinner_char()
+    assert char in _render(dash)
+    dash.set_running(False)
+    assert dash._running is False
+    assert char not in _render(dash)
+
+
+def test_dashboard_stop_releases_animation_thread(monkeypatch):
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash.set_running(True)
+    assert dash._anim_thread is not None
+    dash.stop()
+    assert dash._running is False
+    assert dash._anim_thread is None
 
 
 def test_dashboard_shows_reply_and_meta():

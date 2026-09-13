@@ -1,7 +1,7 @@
 ---
 name: gmail
 description: >-
-  Read and search the master's Gmail inbox over IMAP: latest emails, unread
+  Read and search the master's Gmail inbox via OAuth: latest emails, unread
   messages, and keyword searches. Load this skill whenever pico needs to check
   email, find a message, or summarize recent mail.
 version: 1.0.0
@@ -19,41 +19,42 @@ important mail, finding messages, and summarizing what arrived.
 - Summarizing recent mail into a short briefing.
 
 ## Integration status (wired)
-- pico exposes two read-only tools using the stdlib IMAP client:
-  - `gmail_latest(limit, folder, unread_only)` — most recent emails.
-  - `gmail_search(query, limit, folder)` — IMAP `SEARCH` (e.g. `FROM "x@y.com"`).
-- Reads headers and short snippets only; emails are never deleted or modified
-  (`BODY.PEEK`, `select(readonly=True)`).
+- pico exposes Gmail tools over OAuth2 (the `agents.tools.gmail_oauth` client):
+  - `gmail_list(query, unread_only, max_results)` — latest inbox messages.
+  - `gmail_search(query, max_results)` — Gmail search syntax (e.g. `from:"x@y.com"`).
+  - `gmail_read(message_id)` — full body of one message.
+- Reads only; sending/marking require the master's explicit approval.
 
 ## Prerequisites
-- `.env` must contain `GMAIL_IMAP_USER` (the Gmail address) and
-  `GMAIL_IMAP_PASSWORD` (the account **app password**, not the account password).
-- Google account must have IMAP enabled (Settings → Forwarding and POP/IMAP).
-- If credentials are missing, the tools return a clear error asking the master
-  to configure them.
+- OAuth2 client secrets configured (`GMAIL_CLIENT_SECRET_PATH` or
+  `credentials.json`) and an authorized token (`token.json`).
+- If the token is missing or expired, run
+  `.venv/bin/python -m agents.tools.gmail_oauth` once to authenticate in a browser.
+- If credentials are missing, the tools return "Gmail not configured."
 
 ## Input interface
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| limit | integer | no | How many emails to fetch (1-20, default 5). |
-| folder | string | no | Mailbox folder (default `INBOX`). |
-| unread_only | bool | no | Fetch only unseen messages (`gmail_latest`). |
-| query | string | yes | IMAP search expression (`gmail_search`). |
+| query | string | no | Gmail search expression (`gmail_list`/`gmail_search`). |
+| unread_only | bool | no | Fetch only UNREAD messages (`gmail_list`). |
+| max_results | int | no | Max messages to fetch (default 10). |
+| message_id | string | yes | Gmail message ID (`gmail_read`). |
 
 ## Output interface
-Each email is summarized as: `uid`, `subject`, `from`, `date`, `snippet` (plain text).
+Each email is summarized as: `subject`, `from`, `date`, `snippet` (and ID,
+which `gmail_read` needs).
 
 ## Steps to follow
 1. **Confirm the ask** — what the master wants: latest mail, unread, or a search.
-2. **Call the right tool** — `gmail_latest` for recent/unread, `gmail_search`
-   for a specific query.
+2. **Call the right tool** — `gmail_list` for recent/unread, `gmail_search`
+   for a specific query, `gmail_read` for full content.
 3. **Read the results** — pay attention to subjects and senders.
 4. **Summarize** — a short briefing of what matters; ask before acting on any mail.
 5. **Remember when useful** — save durable facts (e.g. "salary email arrived")
    with `memory_remember` or `semantic_remember`.
 
 ## Safety rules (non-negotiable)
-- Read-only: never delete, move, flag, send, or modify messages.
+- Reading only unless the master approves sending, marking, or anything else.
 - Only the mail the master asked about; never unrelated inboxes or drafts.
-- Credentials stay in `.env` (git-ignored) and are never logged or echoed.
+- Secrets stay in `.env` or local OAuth files (git-ignored) and are never logged.
 - Do not act on emails (pay, reply, click links) without the master's approval.

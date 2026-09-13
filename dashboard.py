@@ -12,6 +12,7 @@ import os
 import sys
 import termios
 import threading
+import time
 import tty
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +30,10 @@ _DONE = "[green]✓[/green] done"
 _FAILED = "[red]✗[/red] failed"
 
 _STATUS_BY_NAME = {"ple": _PENDING, "running": _RUNNING, "done": _DONE, "failed": _FAILED}
+
+# Braille dot spinner for the executing animation (one frame per render tick).
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPINNER_PERIOD = 0.15  # seconds per frame (matches the 6 fps Live refresh)
 
 
 class Dashboard:
@@ -57,6 +62,8 @@ class Dashboard:
         self._reply = ""
         self._reply_meta = ""
         self._running = False
+        self._frame = 0
+        self._anim_thread: Optional[threading.Thread] = None
         self._input_prompt = ""
         self._input_buffer = ""
         self._input_active = False
@@ -74,6 +81,10 @@ class Dashboard:
 
     def stop(self) -> None:
         """Leave the alternate screen and restore the normal console."""
+        self._running = False
+        if self._anim_thread is not None:
+            self._anim_thread.join(timeout=_SPINNER_PERIOD * 2)
+            self._anim_thread = None
         if self._live is not None:
             self._live.stop()
             self._live = None
@@ -113,8 +124,11 @@ class Dashboard:
         self.refresh()
 
     def set_output(self, agent_name: str, text: str) -> None:
-        """Stream an LLM generation's text output into the dashboard."""
+        """Stream an LLM generation or tool result into the dashboard."""
         if not text:
+            return
+        stripped = text.strip()
+        if not stripped or stripped.lower() in {"none", "null", "n/a"}:
             return
         max_len = 400
         if len(text) > max_len:
@@ -135,7 +149,28 @@ class Dashboard:
     def set_running(self, running: bool) -> None:
         """Mark the dashboard as working on a task or idle."""
         self._running = running
+        if running:
+            self._start_animation()
         self.refresh()
+
+    def _spinner_char(self) -> str:
+        """Return the current spinner frame for the running animation."""
+        return _SPINNER[self._frame % len(_SPINNER)]
+
+    def _start_animation(self) -> None:
+        """Start (or reuse) the background thread that animates while running."""
+        if self._anim_thread is not None and self._anim_thread.is_alive():
+            return
+        self._anim_thread = threading.Thread(target=self._anim_loop, daemon=True)
+        self._anim_thread.start()
+
+    def _anim_loop(self) -> None:
+        """Advance the spinner frame and repaint until the task stops."""
+        while self.enabled and self._running and self._live is not None:
+            time.sleep(_SPINNER_PERIOD)
+            with self._lock:
+                self._frame += 1
+            self.refresh()
 
     # ---- in-TUI input -----------------------------------------------------
 
@@ -318,10 +353,8 @@ class Dashboard:
                 Text(self._reply_meta or "", style="dim"),
             )
         else:
-            content = Text(
-                "pico is working…" if self._running else "Type a task below and press Enter.",
-                style="dim",
-            )
+            hint = "pico is working…" if self._running else "Type a task below and press Enter."
+            content = Text(f"{self._spinner_char()} " + hint if self._running else hint, style="dim")
         return Panel(content, title="[bold cyan]pico[/bold cyan]", border_style="cyan")
 
     def _footer(self) -> Panel:
@@ -329,7 +362,10 @@ class Dashboard:
         if self._input_active:
             line = f"{self._input_prompt}{self._input_buffer}▌"
             return Panel(Text(line), border_style="cyan", title="[bold cyan]pico[/bold cyan]")
-        return Panel(self._status, border_style="magenta")
+        status = self._status
+        if self._running:
+            status = f"{self._spinner_char()} {self._status}"
+        return Panel(status, border_style="magenta")
 
     def _render(self) -> Layout:
         layout = Layout()

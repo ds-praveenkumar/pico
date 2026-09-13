@@ -220,6 +220,40 @@ def test_pico_forwards_generate_hook(fake_llm, tmp_path):
     assert any(text for text in contents)
 
 
+def test_agent_forwards_tool_hook(tmp_path):
+    llm = CountingLLM(prompt=10, completion=5)
+    executor = Executor(name="executor", llm=llm, memory=Memory(dir_path=tmp_path))
+    hooks = []
+    executor.on_tool = lambda name, content="": hooks.append((name, content))
+    executor.run("Read README.md")
+    assert hooks
+    assert all(h[0] == "executor" for h in hooks)
+    assert any("[file_read]" in h[1] for h in hooks)
+
+
+def test_pico_forwards_tool_hook(fake_llm, tmp_path):
+    pico = Pico(llm=fake_llm, memory=Memory(dir_path=tmp_path))
+    hooks = []
+    pico.on_tool = lambda name, content="": hooks.append((name, content))
+    pico.run("read the README.md file and tell me what it says")
+    assert any(name == "executor" and "[file_read]" in content for name, content in hooks)
+
+
+def test_every_streamed_tool_output_is_prefixed_nonempty(fake_llm, tmp_path):
+    """End-to-end: every tool result that reaches the UI must be a prefixed,
+    non-empty snippet — never a bare filler like 'none' or 'null'."""
+    pico = Pico(llm=fake_llm, memory=Memory(dir_path=tmp_path))
+    streamed: list = []
+    pico.on_tool = lambda name, content="": streamed.append(content)
+    pico.run("read the README.md file and tell me what it says")
+    assert streamed
+    for snippet in streamed:
+        assert snippet and snippet.strip()
+        assert snippet.startswith("[")
+        assert snippet.strip().lower() not in {"none", "null", "n/a", ""}
+        assert " › none" not in snippet
+
+
 class RecordingLLM(CountingLLM):
     """CountingLLM that also snapshots every message list it is given."""
 

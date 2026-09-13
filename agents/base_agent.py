@@ -98,6 +98,7 @@ class BaseAgent:
         self.history: List[Dict[str, Any]] = []
         self.usage_accum: Dict[str, int] = dict(_ZERO_USAGE)
         self.on_generate: Optional[Callable[[str], None]] = None
+        self.on_tool: Optional[Callable[[str, str], None]] = None
         self.compaction_threshold = int(os.getenv("PICO_COMPACTION_TOKENS", DEFAULT_COMPACTION_TOKENS))
         self._run_tokens = 0
         self._compacted_once = False
@@ -204,6 +205,7 @@ class BaseAgent:
             name = tool_call.function.name
             args = self._parse_args(tool_call)
             result = self._execute(name, args)
+            self._stream_tool_output(name, result)
             messages.append(
                 {
                     "role": "tool",
@@ -211,6 +213,29 @@ class BaseAgent:
                     "content": self._process_result(result),
                 }
             )
+
+    def _stream_tool_output(self, name: str, result: Dict[str, Any]) -> None:
+        """Stream a short, readable snippet of a tool result to the UI hook.
+
+        Tool results are shown live (e.g. gmail output, news headlines) even
+        when the LLM only emits tool calls and no text. The hook is optional
+        and must never break the run.
+        """
+        if self.on_tool is None:
+            return
+        try:
+            text = json.dumps(result, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = str(result)
+        text = (text or "").strip()
+        if len(text) > 500:
+            text = text[:500] + "…"
+        if not text:
+            return
+        try:
+            self.on_tool(self.name, f"[{name}] {text}")
+        except Exception:  # noqa: BLE001 - a UI hook must not break the tool loop
+            logger.debug("tool output hook failed: %s", name, exc_info=True)
 
     def _execute(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Approve then run one tool call; a failing call never raises."""

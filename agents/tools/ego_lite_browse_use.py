@@ -13,10 +13,11 @@ The bridge is safe by construction:
   interpolated value is JSON-encoded.
 - The page snapshot is truncated to ``max_chars`` so a huge page cannot flood
   context.
-- The task space is kept alive across calls: the round never calls
-  ``task.finish`` so agent ownership survives and a click, fill, or select in
-  one call is the starting state for the next. Only a hand-off (``task.handOff``)
-  hands control back to the master.
+- The task space is claimed for the whole user goal and kept alive across
+  calls: a click, fill, or select in one call is the starting state for the
+  next. Only a ``release`` action (``task.finish({ keep: [] })``) closes the
+  agent's task space and frees the browser claim for the next task, and only a
+  hand-off (``task.handOff``) hands control to the master mid-goal.
 
 Human-in-the-loop: when the page shows a CAPTCHA, a login/OTP prompt, or a
 required form, the script hands the space off to the master with
@@ -28,7 +29,9 @@ Actions: ``load`` (default) navigates and snapshots; ``click`` operates on
 ``selector``; ``fill`` types ``query`` into ``selector``; ``select`` selects the
 ``query`` option in the ``selector`` dropdown; ``claim`` re-claims a
 master-owned (handed-off) task space after the master confirms they are done
-with the tab, then acts like ``load``. Selectors accept the refs and
+with the tab, then acts like ``load``; ``release`` finishes the agent-owned task
+space so the browser claim is freed for the next task (never closes a space the
+master is currently using). Selectors accept the refs and
 locators shown in the previous snapshot (``@6``, ``ref=6``, ``loc=css:...``,
 ``loc=role:button[name='...']``, or CSS).
 """
@@ -184,7 +187,7 @@ def _script_for(
     query: Optional[str],
     timeout_ms: int,
 ) -> str:
-    """Build the ego-lite Node script for one navigate/act + snapshot round.
+    """Build the ego-lite Node script for one navigate/act/release + snapshot round.
 
     The script reuses the durable task space ``TASK_SPACE_NAME``: it resumes
     (``takeOverTaskSpace``, falling back to ``claimTaskSpace``) and adopts the
@@ -192,15 +195,20 @@ def _script_for(
     (with a fresh ``p1``) on the first call. After snapshotting, a heuristic
     scans the page text for CAPTCHA/login/required-form hints; when found the
     script hands the space off to the master (``task.handOff()``) and prints
-    ``NEED_HUMAN:<kind>``, otherwise it ends with
-    ``finish({ keep: ['p1'] })`` so the same page survives for the next round.
+    ``NEED_HUMAN:<kind>``, otherwise the space stays agent-owned for the next
+    round. For ``action='release'`` the script instead closes the agent-owned
+    task space with ``task.finish({ keep: [] })`` (printing ``RELEASED:true``)
+    so the browser claim is freed for the next task; a space currently under the
+    master's control is never closed (``RELEASE_SKIPPED``).
     """
     sel = _js_selector(selector or "")
     claim_round = action == "claim"
+    release_round = action == "release"
     lines = [
         "(async () => {",
         f"  const NAME = {_literal(TASK_SPACE_NAME)};",
         f"  const CLAIM_ROUND = {'true' if claim_round else 'false'};",
+        f"  const RELEASE_ROUND = {'true' if release_round else 'false'};",
         "  const CAPTCHA_KW = " + json.dumps(list(_CAPTCHA_HINTS)) + ";",
         "  const LOGIN_KW = " + json.dumps(list(_LOGIN_HINTS)) + ";",
         "  const FORM_KW = " + json.dumps(list(_FORM_HINTS)) + ";",
@@ -216,6 +224,22 @@ def _script_for(
         "  let page;",
         "  let paused = false;",
         "  const existing = (await listTaskSpaces()).find(s => s.name === NAME);",
+        "  if (RELEASE_ROUND) {",
+        "    if (existing && existing.ownership === 'user') {",
+        "      console.log('RELEASE_SKIPPED: the master currently owns this task space; pico does not close a tab that is under the master\\'s control.');",
+        "    } else if (existing) {",
+        "      try {",
+        "        task = await takeOverTaskSpace(existing.id);",
+        "        await task.finish({ keep: [] });",
+        "        console.log('RELEASED:true');",
+        "      } catch (e) {",
+        "        console.log('RELEASE_ERROR: ' + (e && e.message ? e.message : e));",
+        "      }",
+        "    } else {",
+        "      console.log('RELEASED:true');",
+        "    }",
+        "    return;",
+        "  }",
         "  if (existing && !CLAIM_ROUND && existing.ownership === 'user') {",
         "    paused = true;",
         "    console.log('SESSION_PAUSED: the master currently owns this task space (it was handed off to them); browser commands are paused until they continue. Never claim a user-owned space on your own: ask the master through ask_master whether they are done with the tab, and resume with action=claim only after they say to continue.');",
@@ -336,9 +360,10 @@ def browse(
     ``click`` clicks ``selector``; ``fill`` types ``query`` into ``selector``;
     ``select`` chooses the ``query`` option inside the ``selector`` dropdown;
     ``claim`` re-takes a handed-off (master-owned) space after the master says
-    they are done, then acts like ``load``. The task space persists between
-    calls, so later rounds can act on ``url`` loaded earlier without
-    re-navigating.
+    they are done, then acts like ``load``; ``release`` finishes the agent-owned
+    task space so the browser claim is freed for the next task. The task space
+    persists between calls, so later rounds can act on ``url`` loaded earlier
+    without re-navigating.
     """
     if url and not _is_safe_url(url):
         logger.warning(f"[bold red]Unsafe URL refused[/bold red]: {url!r}")
@@ -362,6 +387,7 @@ def browse(
         return {"ok": False, "url": url, "error": f"could not start ego-browser: {exc}"}
 
     combined = proc.stdout + "\n" + proc.stderr
+    release_round = (action or "load").lower() == "release"
     title, final_url = extract_metadata(combined)
     snapshot = extract_snapshot(combined, max_chars=max_chars)
     nav_error = extract_nav_error(combined)
@@ -369,6 +395,17 @@ def browse(
     session_error = extract_session_error(combined)
     paused_error = extract_session_paused(combined)
     kind = extract_need_human(combined)
+    if release_round:
+        if extract_released(combined):
+            logger.info("[bold green]Browser released[/bold green] (task space closed; claim freed for the next task)")
+            return {"ok": True, "url": url, "action": "release", "released": True}
+        release_error = extract_release_error(combined)
+        if release_error:
+            logger.warning(f"[bold red]Browser release failed[/bold red]: {release_error}")
+            return {"ok": False, "url": url, "action": "release", "error": release_error}
+        skipped = extract_release_skipped(combined) or "no browser task space to release"
+        logger.info(f"[bold yellow]Browser release skipped[/bold yellow]: {skipped}")
+        return {"ok": True, "url": url, "action": "release", "released": False, "skipped_reason": skipped}
     if paused_error:
         _raise_ego_lite_window()
         logger.warning("[bold yellow]Browser session paused[/bold yellow] (master owns the tab)")
@@ -468,6 +505,31 @@ def extract_session_paused(stdout: str) -> Optional[str]:
 def extract_claimed(stdout: str) -> bool:
     """Return True when a claim round re-took the master-owned space."""
     return any(line.startswith("CLAIMED:") for line in stdout.splitlines())
+
+
+def extract_released(stdout: str) -> bool:
+    """Return True when a release round closed the agent-owned task space."""
+    return any(
+        line.startswith("RELEASED:")
+        and line[len("RELEASED:"):].strip().lower() == "true"
+        for line in stdout.splitlines()
+    )
+
+
+def extract_release_error(stdout: str) -> Optional[str]:
+    """Return any RELEASE_ERROR text found in ego-browser stdout."""
+    for line in stdout.splitlines():
+        if line.startswith("RELEASE_ERROR:"):
+            return line[len("RELEASE_ERROR:"):].strip()
+    return None
+
+
+def extract_release_skipped(stdout: str) -> Optional[str]:
+    """Return a RELEASE_SKIPPED reason when the space stays under the master."""
+    for line in stdout.splitlines():
+        if line.startswith("RELEASE_SKIPPED:"):
+            return line[len("RELEASE_SKIPPED:"):].strip()
+    return None
 
 
 def extract_need_human(stdout: str) -> Optional[str]:

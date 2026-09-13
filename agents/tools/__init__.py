@@ -6,7 +6,7 @@ through :func:`dispatch`, never by importing modules directly.
 
 from typing import Any, Callable, Dict
 
-from . import ask, bash, current_date, ego_lite_browse_use, file_read, file_write, gmail, latest_news, memory, skill_read
+from . import ask, bash, current_date, ego_lite_browse_use, file_read, file_write, gmail_oauth, latest_news, memory, skill_read
 
 REGISTRY: Dict[str, Dict[str, Any]] = {
     "ask_master": {
@@ -46,7 +46,7 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "ego_lite_browse_use": {
         "callable": ego_lite_browse_use.browse,
-        "description": "Drive the ego-lite browser on the current page. action='load' opens 'url' and snapshots it. action='click' clicks 'selector'. action='fill' types 'query' into 'selector'. action='select' picks the 'query' option in the dropdown 'selector'. action='claim' reclaims a tab handed off to the master (after they say they are done) and snapshots it. The page stays open between calls. For actions use the stable locators from the snapshot (loc=css:..., CSS, or text); snapshot refs like @5 only work in the very same call. Provide 'url' with the first load and keep it in later calls. When the page shows a CAPTCHA, login/OTP, or a required form the result includes 'need_human': stop guessing and ask the master through 'ask_master' — the browser window is open and handed to them until pico resumes this same page. When the result includes 'paused', the tab is parked under the master's control: ask through 'ask_master', then resume with action='claim'.",
+        "description": "Drive the ego-lite browser on the current page. action='load' opens 'url' and snapshots it. action='click' clicks 'selector'. action='fill' types 'query' into 'selector'. action='select' picks the 'query' option in the dropdown 'selector'. action='claim' reclaims a tab handed off to the master (after they say they are done) and snapshots it. action='release' close the browser task space once the goal is done so the browser claim is freed for the next task. The page stays open between calls. For actions use the stable locators from the snapshot (loc=css:..., CSS, or text); snapshot refs like @5 only work in the very same call. Provide 'url' with the first load and keep it in later calls. When the page shows a CAPTCHA, login/OTP, or a required form the result includes 'need_human': stop guessing and ask the master through 'ask_master' — the browser window is open and handed to them until pico resumes this same page. When the result includes 'paused', the tab is parked under the master's control: ask through 'ask_master', then resume with action='claim'.",
         "parameters": {"url": str, "action": str, "selector": str, "query": str},
         "optional": ["url", "selector", "query"],
     },
@@ -85,15 +85,34 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "description": "Find past memories most similar to the query, ranked by meaning.",
         "parameters": {"query": str, "top_k": int},
     },
-    "gmail_latest": {
-        "callable": gmail.gmail_latest,
-        "description": "Read recent emails from the master's Gmail inbox (read-only, IMAP).",
-        "parameters": {"limit": int, "folder": str, "unread_only": bool},
+    "gmail_list": {
+        "callable": gmail_oauth.list_emails,
+        "description": "List the master's Gmail inbox messages via OAuth (read-only). Optional 'query' filters with Gmail search syntax (e.g. 'from:x@y.com', 'subject:meeting'); 'unread_only' limits to unseen; 'max_results' caps the count.",
+        "parameters": {"query": str, "unread_only": bool, "max_results": int},
+        "optional": ["query", "unread_only", "max_results"],
     },
     "gmail_search": {
-        "callable": gmail.gmail_search,
-        "description": "Search the master's Gmail inbox for emails matching an IMAP query.",
-        "parameters": {"query": str, "limit": int, "folder": str},
+        "callable": gmail_oauth.search_emails,
+        "description": "Search the master's Gmail for messages matching a Gmail search query (read-only, OAuth). Returns matching subjects, senders, and dates.",
+        "parameters": {"query": str, "max_results": int},
+        "optional": ["max_results"],
+    },
+    "gmail_read": {
+        "callable": gmail_oauth.read_email,
+        "description": "Read one email's full content from the master's Gmail by message ID (read-only, OAuth).",
+        "parameters": {"message_id": str},
+    },
+    "gmail_send": {
+        "callable": gmail_oauth.send_email,
+        "description": "Send an email from the master's Gmail account (OAuth). Only acts after the master approves.",
+        "parameters": {"to": str, "subject": str, "body": str, "reply_to": str},
+        "optional": ["reply_to"],
+    },
+    "gmail_mark": {
+        "callable": gmail_oauth.mark_email,
+        "description": "Mark a Gmail email as read, unread, or flagged (Starred) via OAuth. Only acts after the master approves.",
+        "parameters": {"message_id": str, "status": str},
+        "optional": ["status"],
     },
 }
 
