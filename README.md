@@ -172,11 +172,12 @@ Token accounting lives on each LLM client (`BaseLLM.usage` / `last_generation`);
 `PROVIDER` selects the model backend; `nvidia` is the default.
 
 ```
-PROVIDER=nvidia                 # openai | nvidia | cerebras | groq
+PROVIDER=nvidia                 # openai | nvidia | cerebras | groq | openrouter
 MODEL_ID=...  API_KEY=...       # openai
 NVIDIA_MODEL_ID / NVIDIA_API_KEY / NVIDIA_BASE_URL   # nvidia
 CEREBRAS_MODEL_ID / CEREBRAS_API_KEY / CEREBRAS_BASE_URL  # cerebras
 GROQ_MODEL_ID / GROQ_API_KEY / GROQ_BASE_URL         # groq (GROK_* accepted as fallback)
+OPENROUTER_MODEL_ID / OPENROUTER_API_KEY / OPENROUTER_BASE_URL  # openrouter
 LOG_LEVEL=INFO                  # optional
 PICO_MEMORY_PATH=~/.pico        # optional memory directory
 PICO_COMPACTION_TOKENS=24000    # optional auto-compaction threshold
