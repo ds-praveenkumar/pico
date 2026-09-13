@@ -10,7 +10,7 @@ type: skill
 # Gym Routine
 
 ## Purpose
-This skill turns pico into a personal training planner for the master, Praveen.
+This skill turns pico into a personal training planner for the master, {master}.
 It designs safe, balanced routines from a stated goal and logs progress so the
 plan improves over time.
 

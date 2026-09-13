@@ -6,12 +6,25 @@ through :func:`dispatch`, never by importing modules directly.
 
 from typing import Any, Callable, Dict
 
+from brain.config import master_name
+
 from . import ask, bash, calendar_oauth, current_date, ego_lite_browse_use, file_read, file_write, gmail_oauth, latest_news, memory, sheets_oauth, skill_read, url_fetch, voice, weather
+
+
+def _ask_master_description() -> str:
+    """Build the ask_master description with the configured master's name."""
+    return (
+        f"Ask the master ({master_name()}) a free-text question and return their answer. "
+        "Use it when a page needs something only the master has or can do — solving a "
+        "CAPTCHA, providing login/OTP details, uploading a file, or any form field pico "
+        "may not guess. Never invent such details."
+    )
+
 
 REGISTRY: Dict[str, Dict[str, Any]] = {
     "ask_master": {
         "callable": ask.ask_master,
-        "description": "Ask the master (Praveen) a free-text question and return their answer. Use it when a page needs something only the master has or can do — solving a CAPTCHA, providing login/OTP details, uploading a file, or any form field pico may not guess. Never invent such details.",
+        "description": _ask_master_description(),
         "parameters": {"question": str},
     },
     "bash": {

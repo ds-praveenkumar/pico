@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from brain.logging_setup import get_logger
+from brain.config import personalize
 
 from agents.base_agent import BaseAgent
 from agents.cancellation import CancellationToken, TaskCancelled
@@ -256,7 +257,7 @@ class Pico(BaseAgent):
 
 def _read_system_prompt() -> str:
     try:
-        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        return personalize(SYSTEM_PROMPT_PATH.read_text(encoding="utf-8"))
     except OSError:
         logger.warning(f"[bold yellow]Missing system prompt[/bold yellow]: {SYSTEM_PROMPT_PATH}")
         return ""

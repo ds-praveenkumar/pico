@@ -3,6 +3,7 @@
 from typing import Any, Dict
 
 from brain.logging_setup import get_logger
+from brain.config import personalize
 
 from agents.base_agent import BaseAgent
 
@@ -10,7 +11,7 @@ logger = get_logger(__name__)
 
 _EXECUTOR_SYSTEM_PROMPT = (
     "You are pico's executor, a careful worker agent. "
-    "You complete small, well-defined tool tasks for the master, Praveen. "
+    "You complete small, well-defined tool tasks for the master, {master}. "
     "Pick the right tool for the job, call it, read its output carefully, "
     "and reply with a short, truthful summary of what was done. "
     "Never delete files, never access paths outside the project root, "
@@ -36,7 +37,7 @@ class Executor(BaseAgent):
     """Sub-agent that executes tool tasks and returns summarized results."""
 
     def system_instructions(self) -> str:
-        return _EXECUTOR_SYSTEM_PROMPT
+        return personalize(_EXECUTOR_SYSTEM_PROMPT)
 
     def execute_tool(self, name: str, **kwargs: Any) -> Dict[str, Any]:
         """Run a single tool directly and return its raw dict result."""

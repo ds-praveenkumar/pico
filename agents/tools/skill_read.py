@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from brain.logging_setup import get_logger
+from brain.config import personalize
 
 logger = get_logger(__name__)
 
@@ -37,6 +38,6 @@ def read_skill(skill_name: str) -> Dict[str, object]:
     if not candidates:
         return {"ok": False, "skill": skill_name, "error": "no .yml/.yaml file found in skill directory"}
     target = candidates[0]
-    content = target.read_text(encoding="utf-8")
+    content = personalize(target.read_text(encoding="utf-8"))
     logger.info(f"[bold green]Read skill[/bold green]: {skill_name} -> {target.name}")
     return {"ok": True, "skill": skill_name, "path": str(target), "content": content}

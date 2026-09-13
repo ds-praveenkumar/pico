@@ -11,7 +11,7 @@ type: skill
 
 ## Purpose
 This skill helps pico act as a careful personal budget planner for the master,
-Praveen. It builds a monthly plan from income and fixed costs, tracks spending by
+{master}. It builds a monthly plan from income and fixed costs, tracks spending by
 category, and forecasts — always from numbers the master provides.
 
 ## When to use
