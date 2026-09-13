@@ -72,8 +72,11 @@ class Pico(BaseAgent):
         )
         self.executor.on_generate = self._forward_generate
         self.researcher.on_generate = self._forward_generate
+        self.executor.on_tool = self._forward_tool
+        self.researcher.on_tool = self._forward_tool
         self.on_plan: Optional[Any] = None
         self.on_step: Optional[Any] = None
+        self.on_tool: Optional[Any] = None
 
     def system_instructions(self) -> str:
         return _read_system_prompt()
@@ -113,9 +116,14 @@ class Pico(BaseAgent):
         return summary
 
     def _forward_generate(self, agent_name: str, content: str = "") -> None:
-        """Relay a sub-agent's hook through pico's own on_generate callback."""
+        """Relay a sub-agent's generate hook through pico's own on_generate."""
         if self.on_generate is not None:
             self.on_generate(agent_name, content)
+
+    def _forward_tool(self, agent_name: str, content: str = "") -> None:
+        """Relay a sub-agent's tool-output hook through pico's own on_tool."""
+        if self.on_tool is not None:
+            self.on_tool(agent_name, content)
 
     def _with_plan_instruction(self, task: str) -> str:
         return f"{task}\n\nPlanning: {_PLAN_INSTRUCTION}"

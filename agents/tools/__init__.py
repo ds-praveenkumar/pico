@@ -6,7 +6,7 @@ through :func:`dispatch`, never by importing modules directly.
 
 from typing import Any, Callable, Dict
 
-from . import ask, bash, current_date, ego_lite_browse_use, file_read, file_write, gmail, latest_news, memory, skill_read
+from . import ask, bash, current_date, ego_lite_browse_use, file_read, file_write, gmail_oauth, latest_news, memory, skill_read
 
 REGISTRY: Dict[str, Dict[str, Any]] = {
     "ask_master": {
@@ -85,15 +85,34 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "description": "Find past memories most similar to the query, ranked by meaning.",
         "parameters": {"query": str, "top_k": int},
     },
-    "gmail_latest": {
-        "callable": gmail.gmail_latest,
-        "description": "Read recent emails from the master's Gmail inbox (read-only, IMAP).",
-        "parameters": {"limit": int, "folder": str, "unread_only": bool},
+    "gmail_list": {
+        "callable": gmail_oauth.list_emails,
+        "description": "List the master's Gmail inbox messages via OAuth (read-only). Optional 'query' filters with Gmail search syntax (e.g. 'from:x@y.com', 'subject:meeting'); 'unread_only' limits to unseen; 'max_results' caps the count.",
+        "parameters": {"query": str, "unread_only": bool, "max_results": int},
+        "optional": ["query", "unread_only", "max_results"],
     },
     "gmail_search": {
-        "callable": gmail.gmail_search,
-        "description": "Search the master's Gmail inbox for emails matching an IMAP query.",
-        "parameters": {"query": str, "limit": int, "folder": str},
+        "callable": gmail_oauth.search_emails,
+        "description": "Search the master's Gmail for messages matching a Gmail search query (read-only, OAuth). Returns matching subjects, senders, and dates.",
+        "parameters": {"query": str, "max_results": int},
+        "optional": ["max_results"],
+    },
+    "gmail_read": {
+        "callable": gmail_oauth.read_email,
+        "description": "Read one email's full content from the master's Gmail by message ID (read-only, OAuth).",
+        "parameters": {"message_id": str},
+    },
+    "gmail_send": {
+        "callable": gmail_oauth.send_email,
+        "description": "Send an email from the master's Gmail account (OAuth). Only acts after the master approves.",
+        "parameters": {"to": str, "subject": str, "body": str, "reply_to": str},
+        "optional": ["reply_to"],
+    },
+    "gmail_mark": {
+        "callable": gmail_oauth.mark_email,
+        "description": "Mark a Gmail email as read, unread, or flagged (Starred) via OAuth. Only acts after the master approves.",
+        "parameters": {"message_id": str, "status": str},
+        "optional": ["status"],
     },
 }
 

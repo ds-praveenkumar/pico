@@ -8,7 +8,7 @@ import pytest
 
 from agents.tools import REGISTRY, TOOL_NAMES, dispatch
 from agents.tools import ask as ask_tools
-from agents.tools import ego_lite_browse_use, gmail as gmail_tools, memory as memory_tools
+from agents.tools import ego_lite_browse_use, gmail_oauth as gmail_tools, memory as memory_tools
 from agents.tools import sandbox
 from agents.tools.bash import is_allowed_command, run_command
 from agents.tools.ego_lite_browse_use import (
@@ -619,7 +619,8 @@ def test_sandbox_reports_timeout(monkeypatch, tmp_path):
 
 
 def test_registry_has_gmail_tools():
-    assert {"gmail_latest", "gmail_search"}.issubset(TOOL_NAMES)
+    assert {"gmail_list", "gmail_search", "gmail_read", "gmail_send", "gmail_mark"}.issubset(TOOL_NAMES)
+    assert "gmail_latest" not in TOOL_NAMES
 
 
 def test_current_date_returns_readable_date():

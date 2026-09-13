@@ -151,8 +151,9 @@ _AUTO_TOOLS = {
     "memory_remember",
     "semantic_remember",
     "semantic_search",
-    "gmail_latest",
+    "gmail_list",
     "gmail_search",
+    "gmail_read",
     "ego_lite_browse_use",
     "latest_news",
     "ask_master",
@@ -340,9 +341,14 @@ def wire_handlers(
         if content:
             dashboard.set_output(agent_name, content)
 
+    def on_tool(agent_name: str, content: str = "") -> None:
+        if content:
+            dashboard.set_output(agent_name, content)
+
     pico.on_plan = dashboard.set_plan
     pico.on_step = dashboard.mark_step
     pico.on_generate = on_generate
+    pico.on_tool = on_tool
 
 
 def _compose(first: Callable, second: Callable) -> Callable:

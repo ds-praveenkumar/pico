@@ -33,10 +33,11 @@ choices so it can serve you better over time.
 - **Safe tools**: command allowlist + destructive-command blocklist
   (`bash`), path-confined reads/writes (`file_read`/`file_write`), skill reader,
   browser automation through ego-lite (`ego_lite_browse_use`), and read-only
-  Gmail over IMAP (`gmail_latest` / `gmail_search`).
-- **Gmail access**: pico reads your inbox (latest/unread/search) over IMAP using
-  the stdlib — read-only, never deletes or modifies email. Configure `GMAIL_IMAP_USER`
-  and `GMAIL_IMAP_PASSWORD` (an **app password**) in `.env`.
+  Gmail via OAuth (`gmail_list` / `gmail_search` / `gmail_read`).
+- **Gmail access**: pico reads your inbox (latest/unread/search) via OAuth2 —
+  read-only, never deletes or modifies email. Configure the OAuth client
+  (`GMAIL_CLIENT_SECRET_PATH`) and authorize once with
+  `python -m agents.tools.gmail_oauth`.
 - **Skills**: declarative YAML skills teach pico domain workflows — browser use,
   Gmail, **gym routines**, and **expense planning**.
 - **Auto-compaction**: long tool-loop conversations are folded into a one-call
@@ -122,9 +123,9 @@ CEREBRAS_MODEL_ID / CEREBRAS_API_KEY / CEREBRAS_BASE_URL  # cerebras
 LOG_LEVEL=INFO                  # optional
 PICO_MEMORY_PATH=~/.pico        # optional memory directory
 PICO_COMPACTION_TOKENS=24000    # optional auto-compaction threshold
-GMAIL_IMAP_USER=you@gmail.com   # Gmail access (read-only IMAP)
-GMAIL_IMAP_PASSWORD=xxxx        # an app password, NOT your account password
-GMAIL_IMAP_HOST=imap.gmail.com  # optional
+GMAIL_CLIENT_SECRET_PATH=file:///path/to/client_secret_*.json  # OAuth app
+GMAIL_IMAP_USER=you@gmail.com   # optional legacy IMAP address (superseded by OAuth)
+GMAIL_IMAP_PASSWORD=xxxx        # optional app password (superseded by OAuth)
 ```
 
 Never commit `.env` — it is git-ignored.

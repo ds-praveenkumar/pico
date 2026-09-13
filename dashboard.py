@@ -124,8 +124,11 @@ class Dashboard:
         self.refresh()
 
     def set_output(self, agent_name: str, text: str) -> None:
-        """Stream an LLM generation's text output into the dashboard."""
+        """Stream an LLM generation or tool result into the dashboard."""
         if not text:
+            return
+        stripped = text.strip()
+        if not stripped or stripped.lower() in {"none", "null", "n/a"}:
             return
         max_len = 400
         if len(text) > max_len:

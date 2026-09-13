@@ -15,7 +15,7 @@ def _console() -> Console:
 
 
 def test_auto_approves_read_only_tools():
-    for tool in ("current_date", "file_read", "skill_read", "memory_recall", "memory_note", "gmail_latest"):
+    for tool in ("current_date", "file_read", "skill_read", "memory_recall", "memory_note", "gmail_list"):
         assert _auto_approve(tool, {}) is True
 
 
@@ -91,6 +91,34 @@ def test_run_task_persistent_routes_reply_into_dashboard(tmp_path, capsys):
     assert ok is True
     assert dash._reply == "hello master"
     assert capsys.readouterr().out == ""
+
+
+def test_wired_live_output_streams_tool_results_never_bare_none(tmp_path, fake_llm):
+    from conftest import FakeLLM
+    from agents.pico import Pico
+    from app import PlanView, SessionStats, wire_handlers
+
+    dash = Dashboard(console=_console(), provider="fake", model="m", memory=Memory(dir_path=tmp_path))
+    llm = FakeLLM()
+    pico = Pico(llm=llm, memory=Memory(dir_path=tmp_path))
+    wire_handlers(pico, llm, dash, PlanView(), SessionStats())
+    streamed: list = []
+    orig_set_output = dash.set_output
+
+    def capture(agent_name, text):
+        streamed.append((agent_name, text))
+        return orig_set_output(agent_name, text)
+
+    dash.set_output = capture
+    reply = pico.run("read the README.md file and tell me what it says")
+    assert reply
+    assert streamed
+    assert any("[file_read]" in text for _, text in streamed)
+    for _, text in streamed:
+        assert text == text.strip()
+        assert text.lower() not in {"none", "null", "n/a", ""}
+    rendered = _render(dash)
+    assert " › none" not in rendered
 
 
 def test_build_client_groq_reads_groq_keys(monkeypatch):

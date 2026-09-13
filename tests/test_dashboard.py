@@ -115,6 +115,18 @@ def test_dashboard_set_output_ignores_empty():
     dash = Dashboard(console=_console(), provider="nvidia", model="m")
     dash.set_output("agent", "")
     assert dash._output == []
+    dash.set_output("agent", "   ")
+    assert dash._output == []
+
+
+def test_dashboard_set_output_ignores_filler_tokens():
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    for filler in ("none", "null", "None", "n/a"):
+        dash.set_output("pico", filler)
+    assert dash._output == []
+    dash.set_output("executor", "[gmail_latest] {\"ok\": true, \"emails\": []}")
+    assert len(dash._output) == 1
+    assert "gmail_latest" in dash._output[0]
 
 
 def test_dashboard_footer_shows_input_line():
