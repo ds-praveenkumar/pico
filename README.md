@@ -71,55 +71,85 @@ python app.py --plain "Summarize README.md"  # no full-screen dashboard
 
 ## Live dashboard
 
-In the REPL, pico runs as a **full-screen chat TUI**: the dashboard owns the
-terminal for the whole session and renders, top to bottom:
+Run `python app.py` in an interactive terminal to open the full-screen Rich TUI.
+The dashboard owns the terminal for the whole session and renders, top to bottom:
 
 - a cyan **status** header with the provider, model, and cumulative token
   counts (prompt / completion / total);
-- a **pico** answer pane showing your latest reply (markdown) — or a spinner
+- a **pico** answer pane showing your latest reply as markdown — or a spinner
   while pico is working;
-- the running **task plan** (blue) next to a green **live** column that stacks
-  the streamed `agent › …` output, per-request **tokens**, per-agent
-  **activity**, **memory** sizes (working / episodes / long-term / semantic),
-  and a captured **log tail**;
-- a magenta **status line** footer that doubles as the in-TUI input box.
+- a blue **task plan** beside a green **live** column containing streamed
+  `agent › …` output, token usage, per-agent activity, memory sizes, and a
+  captured log tail;
+- a magenta footer that becomes the in-TUI input box.
 
-The **input line lives inside the TUI** — type your next task at the bottom
-`pico> ` prompt and press Enter. Approvals and master questions (yes/no and
-free text) render in that same footer, so the screen never corrupts. After each
-task the answer and a session token-usage line appear in the answer pane;
-`exit` quits.
+The input line lives inside the TUI. Type your next task at the bottom `pico> `
+prompt and press Enter. Approvals and master questions (yes/no or free text)
+render in the same footer, so the screen stays intact. After each task, the
+answer and session token usage remain in the answer pane; type `exit` to quit.
+Pass `--plain` to use the classic console REPL instead.
 
-Pass `--plain` to use the classic console REPL instead (input in the terminal).
+### Working view
 
-While a task runs, the plan transitions
-(pending → running → done) like this:
+This is a representative render from the current `dashboard.py` implementation
+(at a 100-column terminal; values change as tasks run):
 
+```text
+╭───────────────────────────────────────────── status ─────────────────────────────────────────────╮
+│ pico — your day-to-day assistant                                                                 │
+│ provider=nvidia  model=example-model  tokens: 412 in / 96 out / 508 total                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────── pico ──────────────────────────────────────────────╮
+│ Type a task below and press Enter.                                                               │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────╮╭──────────────────────────────────────╮
+│                        Task plan                         ││ ╭────────── Live output ───────────╮ │
+│  Status         Step                                     ││ │ executor › Reading README.md     │ │
+│  ✓ done         pico: Plan the request  (planned)        ││ ╰──────────────────────────────────╯ │
+│  ▶ running      executor: Read README.md                 ││                Tokens                │
+│  ● pending      researcher: Research the details         ││  Kind                         Count  │
+│                                                          ││  prompt                         412  │
+│                                                          ││  completion                      96  │
+│                                                          ││  total                          508  │
+│                                                          ││               Activity               │
+│                                                          ││  Agent                     Requests  │
+│                                                          ││  executor                         1  │
+│                                                          ││  pico                             1  │
+│                                                          ││  researcher                       1  │
+│                                                          ││ ╭───────────── Memory ─────────────╮ │
+│                                                          ││ │ working: 0                       │ │
+│                                                          ││ │ episodes: 52                     │ │
+│                                                          ││ │ long-term: 0                     │ │
+│                                                          ││ │ semantic: 0                      │ │
+│                                                          ││ ╰──────────────────────────────────╯ │
+│                                                          ││ ╭──────────── Log tail ────────────╮ │
+│                                                          ││ │ agents.pico :: Planning step     │ │
+│                                                          ││ │ complete                         │ │
+│                                                          ││ ╰──────────────────────────────────╯ │
+│                                                          ││                                      │
+│                                                          ││                                      │
+╰──────────────────────────────────────────────────────────╯╰──────────────────────────────────────╯
+╭────────────────────────────────────────────── pico ──────────────────────────────────────────────╮
+│ pico> Summarize README.md▌                                                                       │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
-╭─ status ──────────────────────────────────────────────────╮
-│ pico — your day-to-day assistant                          │
-│ provider=nvidia  model=…  tokens: 412 in / 96 out / 508   │
-├─ pico ────────────────────────────────────────────────────┤
-│ **Your latest email** …                                   │
-│ "check my email" · 508 tokens · 0.4s                      │
-├─ Task plan ────────────────┬─ Live output ────────────────┤
-│ ● pending   pico: plan     │ executor › gmail_list …      │
-│ ▶ running  executor: …     ├─ Tokens ──┬─ Activity ───────┤
-│ ✓ done    executor: …      │ prompt   412│ executor    2  │
-│                            │ completion 96│ researcher  1 │
-│                            │ total    508│               │
-│                            ├─ Memory ─────────────────────┤
-│                            │ working: 6   episodes: 3    │
-│                            │ long-term: 2 semantic: 4    │
-│                            ├─ Log tail ───────────────────┤
-│                            │ gmail :: list complete …    │
-│ ⠿ executing plan… ─────────┴─────────────────────────────┤
-╰──────────────────────────────────────────────────────────╯
-```
 
-Markers are live: `● pending`, `▶ running`, `✓ done`, `✗ failed`. The
-dashboard takes over the alternate screen during a task and restores the normal
-console when it finishes.
+Markers are live: `● pending`, `▶ running`, `✓ done`, `✗ failed`. The dashboard
+uses the terminal alternate screen while running and restores the normal console
+when it exits.
 
 Token accounting lives on each LLM client (`BaseLLM.usage` / `last_generation`);
 `Pico.usage` sums across the orchestrator and both sub-agents.
