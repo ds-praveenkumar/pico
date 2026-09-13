@@ -17,6 +17,7 @@ from agents.tools.ego_lite_browse_use import (
     extract_metadata,
     extract_nav_error,
     extract_need_human,
+    extract_released,
     extract_snapshot,
 )
 from agents.tools.file_read import read_file
@@ -226,8 +227,72 @@ def test_browse_keeps_page_open_and_reuses_space(monkeypatch):
     assert "await listTaskSpaces()" in script
     assert "takeOverTaskSpace(existing.id)" in script
     assert "claimTaskSpace(existing.id)" in script
-    assert "keep: ['p1']" in script
     assert 'page.goto("https://example.com"' in script
+    assert "keep: ['p1']" not in script
+    assert "RELEASE_ROUND = false" in script
+
+
+def test_browse_release_builds_finish_script(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script",
+                        lambda script, timeout: (captured.update(script=script) or _snapshot_proc()))
+    result = browse(action="release")
+    assert result["ok"] is True
+    script = captured["script"]
+    assert "RELEASE_ROUND = true" in script
+    assert "await takeOverTaskSpace(existing.id)" in script
+    assert "await task.finish({ keep: [] })" in script
+    assert "console.log('RELEASED:true')" in script
+    assert "RELEASE_SKIPPED" in script
+    assert "existing.ownership === 'user'" in script
+    assert "await page.goto" not in script
+
+
+def test_browse_release_returns_released(monkeypatch):
+    fake = _fake_proc("RELEASED:true\n")
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse(action="release")
+    assert result["ok"] is True
+    assert result["action"] == "release"
+    assert result.get("released") is True
+
+
+def test_browse_release_reports_failure(monkeypatch):
+    fake = _fake_proc("RELEASE_ERROR: space is locked\n")
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse(action="release")
+    assert result["ok"] is False
+    assert result["action"] == "release"
+    assert "space is locked" in result["error"]
+
+
+def test_browse_release_skips_when_master_owns(monkeypatch):
+    fake = _fake_proc("RELEASE_SKIPPED: the master currently owns this task space\n")
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse(action="release")
+    assert result["ok"] is True
+    assert result["action"] == "release"
+    assert result.get("released") is False
+    assert "master currently owns" in result["skipped_reason"]
+
+
+def test_extract_release_helpers():
+    from agents.tools.ego_lite_browse_use import (
+        extract_release_error,
+        extract_release_skipped,
+    )
+
+    assert extract_released("RELEASED:true\n") is True
+    assert extract_released("RELEASED: false\n") is False
+    assert extract_released("TITLE: x\n") is False
+    assert extract_release_error("RELEASE_ERROR: boom\n") == "boom"
+    assert extract_release_error("") is None
+    assert extract_release_skipped("RELEASE_SKIPPED: nope\n") == "nope"
+    assert extract_release_skipped("") is None
 
 
 def test_browse_click_normalizes_refs(monkeypatch):

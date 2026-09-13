@@ -2,3 +2,6 @@ openai
 python-dotenv
 rich
 pytest
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-api-python-client>=2.108.0

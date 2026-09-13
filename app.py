@@ -282,6 +282,7 @@ def run_task(
 
     failed = False
     reply = ""
+    dashboard.set_running(True)
     try:
         try:
             reply = pico.run(task)
@@ -289,6 +290,7 @@ def run_task(
             failed = True
             logger.error(f"[bold red]Task failed[/bold red]: {exc}")
     finally:
+        dashboard.set_running(False)
         if not persistent:
             dashboard.stop()
             capture_logs(False)
@@ -404,9 +406,7 @@ def run_tui_repl(
                 dashboard.set_status("cleared")
                 continue
             dashboard.set_status("working on your task…")
-            dashboard.set_running(True)
             run_task(pico, llm, task, plan, stats, dashboard, persistent=True)
-            dashboard.set_running(False)
             dashboard.set_status("ready for your next task — type below")
     finally:
         pump_stop.set()

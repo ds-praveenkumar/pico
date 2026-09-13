@@ -36,7 +36,7 @@ visit and search important websites on behalf of the master, Praveen.
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | url | string | no | http(s) URL to visit. Only http/https are allowed. Provide it on the first `load`; keep it on `click`/`fill`/`select` rounds. |
-| action | string | yes | What to do this round: `load`, `click`, `fill`, `select`, or `claim` (reclaim a handed-off tab after the master says they are done). |
+| action | string | yes | What to do this round: `load`, `click`, `fill`, `select`, `claim` (reclaim a handed-off tab after the master says they are done), or `release` (close the pico-owned task space once the goal is complete, freeing the browser claim for the next task). |
 | selector | string | no | Stable selector for click/fill/select: the `loc=css:...` / `loc=role:...` / href text printed in the snapshot, a CSS selector, or `text=...`. Snapshot refs like `@5` only work in the very same call, not on pages opened later. |
 | query | string | no | Text to type (`fill`) or the option to pick (`select`). |
 
@@ -46,6 +46,7 @@ visit and search important websites on behalf of the master, Praveen.
 | result | string | Plain-text page summary or extracted data folded into the task report. |
 | need_human | object | Present when the page needs the master: `kind` is `captcha`, `login`, or `form_input`. The browser window is open on that page and handed to the master — ask via `ask_master`, then resume the same page. |
 | paused | bool | Present (`true`) when the tab is parked under the master's control from an earlier hand-off. Do not claim it on your own — ask via `ask_master` whether the master is done with it, then resume with `action='claim'`. |
+| released | bool | Present on an `action='release'` call: `true` when the pico-owned task space was closed and the browser claim freed for the next task. |
 
 ## Steps to follow
 1. **Validate** — confirm the URL is http(s) with a hostname; refuse everything else.
@@ -62,7 +63,11 @@ visit and search important websites on behalf of the master, Praveen.
 7. **Humans only**: when a CAPTCHA, login/OTP, or required form appears, call
    `ask_master` and let the master solve it in the open browser; never guess.
 8. **Report** — return only a plain-text summary to pico, never raw DOM dumps.
-9. **Clean up** — call `task.finish({ keep: [] })` exactly once when the goal is done.
+9. **Clean up / release the claim** — once the goal is complete, call
+   `ego_lite_browse_use` with `action='release'` exactly once (no `url` needed)
+   so the pico-owned TaskSpace is closed and the browser claim is freed for the
+   next task. Never release while a hand-off is pending (`need_human`/`paused`
+   in the result) — the master still owns that tab.
 
 ## Browser interface (after wire-up)
 Scripts run as `ego-browser nodejs` heredocs. Key APIs:
