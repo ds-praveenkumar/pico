@@ -5,6 +5,8 @@ Subclasses override :meth:`system_instructions` for their role. Every tool call
 goes through an optional supervisor (``approve``) before it executes.
 """
 
+import asyncio
+import inspect
 import json
 import os
 import re
@@ -13,7 +15,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from brain.base_llm import BaseLLM
 from brain.logging_setup import get_logger
 
-from agents.tools import REGISTRY, dispatch
+from agents.cancellation import CancellationToken
+from agents.tools import REGISTRY, ask as ask_tools, dispatch
 from agents.tools.memory import bind_memory, unbind_memory
 
 logger = get_logger(__name__)
@@ -84,10 +87,11 @@ class BaseAgent:
         self,
         name: str,
         llm: BaseLLM,
-        approve: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        approve: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
         max_turns: int = DEFAULT_MAX_TURNS,
         memory: Optional[Any] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        cancel_token: Optional[CancellationToken] = None,
     ) -> None:
         self.name = name
         self.llm = llm
@@ -95,6 +99,7 @@ class BaseAgent:
         self.max_turns = max_turns
         self.memory = memory
         self.tools = tools or openai_tool_schemas()
+        self.cancel_token = cancel_token
         self.history: List[Dict[str, Any]] = []
         self.usage_accum: Dict[str, int] = dict(_ZERO_USAGE)
         self.on_generate: Optional[Callable[[str], None]] = None
@@ -121,6 +126,20 @@ class BaseAgent:
             self.on_generate(self.name, content)
         return response
 
+    async def _generate_async(self, messages: List[Dict[str, Any]]) -> Any:
+        """Call a synchronous LLM client without blocking the UI event loop."""
+        response = await asyncio.to_thread(self.llm.generate, messages=messages)
+        last = getattr(self.llm, "last_generation", _ZERO_USAGE)
+        for key in self.usage_accum:
+            self.usage_accum[key] += last.get(key, 0)
+        if self.on_generate is not None:
+            try:
+                content = self._text_of(response)
+            except Exception:  # noqa: BLE001 - content extraction must never break a run
+                content = ""
+            self.on_generate(self.name, content)
+        return response
+
     @property
     def usage(self) -> Dict[str, int]:
         """Token usage accumulated on this agent's own generations."""
@@ -128,6 +147,8 @@ class BaseAgent:
 
     def run(self, task: str) -> str:
         """Run the tool-calling loop for a task and return the final text."""
+        if self.cancel_token is not None:
+            self.cancel_token.raise_if_cancelled()
         system_prompt = self.system_instructions()
         if self.memory is not None:
             context = self.memory.load_context() or ""
@@ -149,6 +170,55 @@ class BaseAgent:
         self._capture_after_task(task, final_text)
         return final_text
 
+    async def run_async(self, task: str) -> str:
+        """Run the asynchronous tool loop used by event-driven interfaces."""
+        if self.cancel_token is not None:
+            self.cancel_token.raise_if_cancelled()
+        system_prompt = self.system_instructions()
+        if self.memory is not None:
+            context = self.memory.load_context() or ""
+            if context:
+                system_prompt = f"{system_prompt}\n\n## Notes about the master\n{context}"
+        messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": task})
+        self.history = messages
+
+        bind_memory(self.memory)
+        self._run_tokens = 0
+        self._compacted_once = False
+        try:
+            final_text = await self._loop_async(messages)
+        finally:
+            unbind_memory()
+        self._capture_after_task(task, final_text)
+        return final_text
+
+    async def _loop_async(self, messages: List[Dict[str, Any]]) -> str:
+        """Run the asynchronous supervised tool-calling flow for event-driven UIs.
+
+        Mirrors :meth:`_loop` but awaits each LLM turn and each tool call, so the
+        UI event loop stays reactive: LLM calls run in worker threads and approval
+        callbacks may be coroutines (e.g. Textual modal screens).
+        """
+        if not self.llm.tools:
+            self.llm.tools = self.tools
+
+        for turn in range(self.max_turns):
+            if self.cancel_token is not None:
+                self.cancel_token.raise_if_cancelled()
+            message = await self._ask_turn_async(messages)
+            if message is None:
+                break
+            tool_calls = self._tool_calls_of(message)
+            self._append_assistant(messages, message.content or "", tool_calls)
+            if not tool_calls:
+                logger.info(f"[bold green]{self.name} finished[/bold green] after {turn + 1} turn(s)")
+                return message.content or ""
+            await self._run_tool_calls_async(messages, tool_calls)
+        return f"{self.name}: I could not finish the task within {self.max_turns} turns."
+
     def _loop(self, task: str, messages: List[Dict[str, Any]]) -> str:
         """Run the common supervised tool-calling flow; return the final answer.
 
@@ -163,6 +233,8 @@ class BaseAgent:
             self.llm.tools = self.tools
 
         for turn in range(self.max_turns):
+            if self.cancel_token is not None:
+                self.cancel_token.raise_if_cancelled()
             message = self._ask_turn(messages)
             if message is None:
                 break
@@ -178,6 +250,12 @@ class BaseAgent:
         """Run one LLM turn and return its chat message (None on no response)."""
         response = self._generate(messages)
         self._maybe_compact(messages)
+        return self._message_of(response)
+
+    async def _ask_turn_async(self, messages: List[Dict[str, Any]]) -> Any:
+        """Run one asynchronous LLM turn and return its chat message."""
+        response = await self._generate_async(messages)
+        await self._maybe_compact_async(messages)
         return self._message_of(response)
 
     def _tool_calls_of(self, message: Any) -> List[Any]:
@@ -214,6 +292,21 @@ class BaseAgent:
                 }
             )
 
+    async def _run_tool_calls_async(self, messages: List[Dict[str, Any]], tool_calls: List[Any]) -> None:
+        """Execute every tool call (off-thread) and append result messages."""
+        for tool_call in tool_calls:
+            name = tool_call.function.name
+            args = self._parse_args(tool_call)
+            result = await self._execute_async(name, args)
+            self._stream_tool_output(name, result)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": self._process_result(result),
+                }
+            )
+
     def _stream_tool_output(self, name: str, result: Dict[str, Any]) -> None:
         """Stream a short, readable snippet of a tool result to the UI hook.
 
@@ -239,11 +332,35 @@ class BaseAgent:
 
     def _execute(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Approve then run one tool call; a failing call never raises."""
+        if self.cancel_token is not None:
+            self.cancel_token.raise_if_cancelled()
         if self.approve is not None and not self.approve(name, args):
             logger.warning(f"[bold yellow]{self.name} tool rejected[/bold yellow]: {name}")
             return {"ok": False, "error": "rejected by the master"}
         try:
             return dispatch(name, **args)
+        except Exception as exc:  # noqa: BLE001 - a failing tool must not kill the loop
+            logger.error(f"[bold red]Tool crashed[/bold red]: {name} -> {exc}")
+            return {"ok": False, "error": f"tool {name} crashed: {exc}"}
+
+    async def _execute_async(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Async approve-then-run one tool call, mirroring :meth:`_execute`.
+
+        The approval callback may return a coroutine (e.g. an async Textual modal
+        prompt); the actual tool runs in a worker thread so blocking tools never
+        stall the UI event loop. A failing call never raises.
+        """
+        if self.cancel_token is not None:
+            self.cancel_token.raise_if_cancelled()
+        if self.approve is not None:
+            decision = self.approve(name, args)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            if not decision:
+                logger.warning(f"[bold yellow]{self.name} tool rejected[/bold yellow]: {name}")
+                return {"ok": False, "error": "rejected by the master"}
+        try:
+            return await asyncio.to_thread(dispatch, name, **args)
         except Exception as exc:  # noqa: BLE001 - a failing tool must not kill the loop
             logger.error(f"[bold red]Tool crashed[/bold red]: {name} -> {exc}")
             return {"ok": False, "error": f"tool {name} crashed: {exc}"}
@@ -299,6 +416,18 @@ class BaseAgent:
         if self._compacted_once or self._run_tokens <= self.compaction_threshold:
             return
         summary = self._compact_summary(messages)
+        self._apply_compaction(messages, summary)
+
+    async def _maybe_compact_async(self, messages: List[Dict[str, Any]]) -> None:
+        """Async variant of :meth:`_maybe_compact` for event-driven UIs."""
+        self._run_tokens += getattr(self.llm, "last_generation", _ZERO_USAGE).get("total", 0)
+        if self._compacted_once or self._run_tokens <= self.compaction_threshold:
+            return
+        summary = await self._compact_summary_async(messages)
+        self._apply_compaction(messages, summary)
+
+    def _apply_compaction(self, messages: List[Dict[str, Any]], summary: str) -> None:
+        """Fold the conversation history into a compact summary system prompt."""
         system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
         compacted: List[Dict[str, Any]] = [
             {"role": "system", "content": f"{system}\n\n## {_COMPACT_SENTINEL}\n{summary}"}
@@ -311,6 +440,18 @@ class BaseAgent:
 
     def _compact_summary(self, messages: List[Dict[str, Any]]) -> str:
         """Ask the LLM to compress past turns into concise continuation notes."""
+        prompt = _COMPACT_PROMPT + self._condense_messages(messages)
+        response = self._generate([{"role": "user", "content": prompt}])
+        return self._text_of(response) or "(compaction notes unavailable)"
+
+    async def _compact_summary_async(self, messages: List[Dict[str, Any]]) -> str:
+        """Async variant of :meth:`_compact_summary` for event-driven UIs."""
+        prompt = _COMPACT_PROMPT + self._condense_messages(messages)
+        response = await self._generate_async([{"role": "user", "content": prompt}])
+        return self._text_of(response) or "(compaction notes unavailable)"
+
+    def _condense_messages(self, messages: List[Dict[str, Any]]) -> str:
+        """Render the latest messages as compact ``role: content`` lines."""
         condensed: List[str] = []
         for message in messages[-24:]:
             role = message.get("role", "?")
@@ -320,9 +461,7 @@ class BaseAgent:
             if len(content) > 600:
                 content = content[:600] + "…"
             condensed.append(f"{role}: {content}")
-        prompt = _COMPACT_PROMPT + "\n".join(condensed)
-        response = self._generate([{"role": "user", "content": prompt}])
-        return self._text_of(response) or "(compaction notes unavailable)"
+        return "\n".join(condensed)
 
     def _capture_after_task(self, task: str, final_text: str) -> None:
         """Persist working + episodic memory notes for a finished task."""
