@@ -160,3 +160,22 @@ def test_build_client_groq_missing_key_raises(monkeypatch):
     monkeypatch.delenv("GROK_API_KEY", raising=False)
     with pytest.raises(ValueError, match="GROQ_API_KEY"):
         build_client()
+
+
+def test_build_client_openrouter(monkeypatch):
+    monkeypatch.setenv("PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_MODEL_ID", "anthropic/claude-sonnet-4")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    client = build_client()
+    assert client.provider == "openrouter"
+    assert client.model_name == "anthropic/claude-sonnet-4"
+    assert client.api_key == "sk-or-test"
+    assert client.base_url == "https://openrouter.ai/api/v1"
+
+
+def test_build_client_openrouter_missing_key_raises(monkeypatch):
+    monkeypatch.setenv("PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_MODEL_ID", "m")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        build_client()

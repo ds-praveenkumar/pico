@@ -138,3 +138,39 @@ def test_registry_has_latest_news(monkeypatch):
     result = dispatch("latest_news", limit=1)
     assert result["ok"] is True
     assert result["count"] == len(news_module.DEFAULT_SOURCES)
+
+
+def test_latest_news_topic_uses_google_news_search(monkeypatch):
+    seen = {}
+
+    def open_url(url: str, timeout: int = 15):  # noqa: ARG001
+        seen["url"] = url
+        return FakeResponse(RSS_BODY)
+
+    monkeypatch.setattr(news_module, "_urlopen", open_url)
+    result = latest_news(topic="artificial intelligence")
+    assert result["ok"] is True
+    assert "news.google.com" in seen["url"]
+    assert "q=artificial%20intelligence" in seen["url"]
+    assert result["topic"] == "artificial intelligence"
+    assert result["count"] == 2  # only the topic feed is fetched (2 items in the mock body)
+    assert "Google News (artificial intelligence)" in result["headlines"][0]["source"]
+
+
+def test_latest_news_topic_blank_uses_defaults(monkeypatch):
+    monkeypatch.setattr(news_module, "_urlopen", _fake_open({}))
+    result = latest_news(topic="   ", limit=1)
+    assert result["ok"] is True
+    assert result["topic"] is None
+    assert result["count"] == len(news_module.DEFAULT_SOURCES)
+
+
+def test_latest_news_topic_failure_reported(monkeypatch):
+    def broken_open(url: str, timeout: int = 15):  # noqa: ARG001
+        raise OSError("network refused")
+
+    monkeypatch.setattr(news_module, "_urlopen", broken_open)
+    result = latest_news(topic="ai")
+    assert result["ok"] is False
+    assert result["topic"] == "ai"
+    assert len(result["failed"]) == 1

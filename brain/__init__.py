@@ -5,6 +5,7 @@ from .openai_client import OpenAIClient
 from .nvidia_client import NvidiaClient
 from .cerebras_client import CerebrasClient
 from .groq_client import GroqClient
+from .openrouter_client import OpenRouterClient
 from .memory import EpisodicMemory, Memory, NotesStore, WorkingMemory
 from .semantic import HashingEmbedding, SemanticMemory
 
@@ -14,6 +15,7 @@ __all__ = [
     "NvidiaClient",
     "CerebrasClient",
     "GroqClient",
+    "OpenRouterClient",
     "NotesStore",
     "WorkingMemory",
     "EpisodicMemory",

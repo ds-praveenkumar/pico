@@ -36,13 +36,19 @@ category, and forecasts — always from numbers the master provides.
 
 ## Steps to follow
 1. **Gather numbers from the master** — never guess income or big expenses.
-2. **Separate fixed vs variable** — split the budget into bills (fixed) and the
+2. **Use the master's Google Sheets ledger when available** — recall the
+   spreadsheet with `memory_recall` (key `expense_sheet_id`) or ask the master
+   for its URL once and remember it with `memory_remember`. Read the ledger's
+   `Date | Category | Amount | Note` columns with `sheets_read`, and append every
+   new approved transaction with `sheets_append` (one row at a time, nothing else
+   is written). The master always sees and owns the sheet.
+3. **Separate fixed vs variable** — split the budget into bills (fixed) and the
    rest (food, transport, fun, savings).
-3. **Build categories** — a few clear buckets, ordered by importance.
-4. **Compare actuals** — total expenses per category and flag overruns.
-5. **Forecast** — project the current month from the spend so far and the days left.
-6. **Suggest, never decide** — propose adjustments, keep the master in control.
-7. **Keep notes** — remember the active budget and goals with `memory_remember`.
+4. **Build categories** — a few clear buckets, ordered by importance.
+5. **Compare actuals** — total expenses per category and flag overruns.
+6. **Forecast** — project the current month from the spend so far and the days left.
+7. **Suggest, never decide** — propose adjustments, keep the master in control.
+8. **Keep notes** — remember the active budget and goals with `memory_remember`.
 
 ## Budgeting rules (safely)
 - Fixed costs first, savings second, then variable spend.
@@ -56,4 +62,6 @@ category, and forecasts — always from numbers the master provides.
   the master did not give pico.
 - No investment or debt advice presented as fact; recommend a professional when
   appropriate.
-- Expense data stays on the master's machine in pico's long-term memory notes.
+- The expense ledger lives in the master's own Google Sheet (or, failing that,
+  in pico's long-term memory notes) — data never leaves the master's accounts,
+  and `sheets_append` / `sheets_update` only ever run after explicit approval.

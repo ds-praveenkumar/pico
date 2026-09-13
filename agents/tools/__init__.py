@@ -6,7 +6,7 @@ through :func:`dispatch`, never by importing modules directly.
 
 from typing import Any, Callable, Dict
 
-from . import ask, bash, current_date, ego_lite_browse_use, file_read, file_write, gmail_oauth, latest_news, memory, skill_read
+from . import ask, bash, calendar_oauth, current_date, ego_lite_browse_use, file_read, file_write, gmail_oauth, latest_news, memory, sheets_oauth, skill_read, url_fetch, voice, weather
 
 REGISTRY: Dict[str, Dict[str, Any]] = {
     "ask_master": {
@@ -52,8 +52,59 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "latest_news": {
         "callable": latest_news.latest_news,
-        "description": "Fetch today's top news headlines from curated public RSS feeds (Google News, BBC World, The Guardian). Use this for any 'today's news' or 'latest headlines' request.",
-        "parameters": {"limit": int},
+        "description": "Fetch today's top news headlines from curated public RSS feeds (Google News, BBC World, The Guardian), or news about a 'topic' via Google News search. Use this for any 'today's news' or 'latest headlines' request.",
+        "parameters": {"limit": int, "topic": str},
+        "optional": ["topic"],
+    },
+    "weather": {
+        "callable": weather.weather,
+        "description": "Get the current weather and a short forecast for a location (Open-Meteo, no API key). Use for any 'what's the weather' or 'forecast' request; pass a city or place name in 'location'.",
+        "parameters": {"location": str, "days": int},
+        "optional": ["days"],
+    },
+    "url_fetch": {
+        "callable": url_fetch.url_fetch,
+        "description": "Fetch one public http(s) page and return its text, title, and metadata (read-only, no JavaScript). Use it to read plain pages and docs; use the ego-lite browser for pages that need interaction or JavaScript.",
+        "parameters": {"url": str, "max_bytes": int, "timeout": int},
+        "optional": ["max_bytes", "timeout"],
+    },
+    "voice_speak": {
+        "callable": voice.voice_speak,
+        "description": "Speak a short text out loud with the system voice (macOS 'say'). Use when the master asks pico to speak its answer aloud.",
+        "parameters": {"text": str, "rate": int},
+        "optional": ["rate"],
+    },
+    "calendar_list": {
+        "callable": calendar_oauth.calendar_list,
+        "description": "List upcoming events from the master's primary Google Calendar via OAuth (read-only). 'max_results' caps the count; 'days_ahead' looks that many days forward.",
+        "parameters": {"max_results": int, "days_ahead": int},
+        "optional": ["max_results", "days_ahead"],
+    },
+    "calendar_create": {
+        "callable": calendar_oauth.calendar_create,
+        "description": "Create an event on the master's primary Google Calendar via OAuth. 'start' and 'end' are ISO 8601 timestamps. Only acts after the master approves.",
+        "parameters": {"summary": str, "start": str, "end": str, "description": str},
+        "optional": ["description"],
+    },
+    "calendar_respond": {
+        "callable": calendar_oauth.calendar_respond,
+        "description": "Set the master's attendance on a Google Calendar event to accepted/declined/tentative via OAuth. Only acts after the master approves.",
+        "parameters": {"event_id": str, "response": str},
+    },
+    "sheets_read": {
+        "callable": sheets_oauth.sheets_read,
+        "description": "Read a range from the master's Google Sheets spreadsheet via OAuth (read-only). 'spreadsheet_id' accepts a URL or raw ID; 'range_name' like 'Transactions!A1:D200'.",
+        "parameters": {"spreadsheet_id": str, "range_name": str},
+    },
+    "sheets_append": {
+        "callable": sheets_oauth.sheets_append,
+        "description": "Append row(s) to the master's Google Sheets spreadsheet via OAuth. 'values' is one row (['2026-09-13', 'Food', 12.5, 'lunch']) or several. Only acts after the master approves.",
+        "parameters": {"spreadsheet_id": str, "range_name": str, "values": list},
+    },
+    "sheets_update": {
+        "callable": sheets_oauth.sheets_update,
+        "description": "Overwrite a range in the master's Google Sheets spreadsheet via OAuth. 'values' is one row or several. Only acts after the master approves.",
+        "parameters": {"spreadsheet_id": str, "range_name": str, "values": list},
     },
     "memory_remember": {
         "callable": memory.memory_remember,

@@ -10,11 +10,11 @@ Usage:
     python app.py "your task"      # run one task and exit
     python app.py "your task" -y   # single-shot, auto-approve tool calls
     python app.py --plain "task"   # single-shot without the live dashboard
+    python app.py --tui            # Textual interface (home/history/memory/settings)
 """
 
 import argparse
 import os
-import shlex
 import threading
 from typing import Any, Callable, Dict, List
 
@@ -31,10 +31,11 @@ from brain.logging_setup import capture_logs, drained_logs, get_logger, setup_ri
 from brain.memory import Memory
 from brain.nvidia_client import NvidiaClient
 from brain.openai_client import OpenAIClient
+from brain.openrouter_client import OpenRouterClient
 
+from approval import auto_approve as _auto_approve, bash_needs_approval as _bash_needs_approval
 from agents.pico import Pico
 from agents.tools import ask as ask_tools
-from agents.tools import bash as bash_tool
 from dashboard import Dashboard
 
 logger = get_logger(__name__)
@@ -76,7 +77,14 @@ def build_client() -> BaseLLM:
             api_key=os.getenv("NVIDIA_API_KEY"),
             base_url=os.getenv("NVIDIA_BASE_URL"),
         )
-    raise ValueError(f"unknown PROVIDER={provider!r} (expected openai, nvidia, cerebras, or groq)")
+    if provider == "openrouter":
+        return OpenRouterClient(
+            provider="openrouter",
+            model_name=os.getenv("OPENROUTER_MODEL_ID") or "",
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            base_url=os.getenv("OPENROUTER_BASE_URL"),
+        )
+    raise ValueError(f"unknown PROVIDER={provider!r} (expected openai, nvidia, cerebras, groq, or openrouter)")
 
 
 def memory_from_env() -> Memory:
@@ -136,102 +144,6 @@ def print_reply(text: str) -> None:
 def print_plan_summary(plan: PlanView) -> None:
     """Show the completed task plan as a table."""
     console.print(Panel(plan.table(), border_style="green"))
-
-
-# Tools that read, record, or only touch pico's own sandbox — safe without asking.
-_AUTO_TOOLS = {
-    "current_date",
-    "file_read",
-    "file_write",
-    "skill_read",
-    "list_skills",
-    "memory_recall",
-    "memory_note",
-    "memory_episode",
-    "memory_remember",
-    "semantic_remember",
-    "semantic_search",
-    "gmail_list",
-    "gmail_search",
-    "gmail_read",
-    "ego_lite_browse_use",
-    "latest_news",
-    "ask_master",
-}
-
-# Read-only commands that may run without asking when used alone (no redirects).
-_BASH_AUTO_FIRST = {
-    "awk",
-    "basename",
-    "cat",
-    "date",
-    "df",
-    "dirname",
-    "du",
-    "echo",
-    "env",
-    "file",
-    "find",
-    "grep",
-    "head",
-    "hostname",
-    "jq",
-    "ls",
-    "printf",
-    "pwd",
-    "readlink",
-    "realpath",
-    "rg",
-    "tail",
-    "true",
-    "false",
-    "uname",
-    "wc",
-    "which",
-    "whoami",
-}
-
-# Commands that are only auto-approved for a specific read-only invocation.
-_BASH_AUTO_ARGS: Dict[str, Callable[[List[str]], bool]] = {
-    # python must never auto-run code — version queries only.
-    "python": lambda parts: len(parts) > 1 and parts[1] in {"-V", "--version"},
-    "python3": lambda parts: len(parts) > 1 and parts[1] in {"-V", "--version"},
-    # pip is safe only for read-only listing/showing.
-    "pip": lambda parts: len(parts) > 1 and parts[1] in {"list", "show", "freeze"},
-    "pip3": lambda parts: len(parts) > 1 and parts[1] in {"list", "show", "freeze"},
-}
-
-# git subcommands that never modify the repository or the network.
-_GIT_AUTO_SUBCOMMANDS = {"blame", "branch", "diff", "log", "ls-files", "remote", "rev-parse", "show", "status", "tag"}
-
-
-def _bash_needs_approval(command: str) -> bool:
-    """Return True when a shell command should be confirmed with the master."""
-    try:
-        parts = shlex.split(command)
-    except ValueError:
-        return True
-    if not parts or ">" in parts:  # a redirect can write a file anywhere
-        return True
-    first = os.path.basename(parts[0])
-    if first in bash_tool.DESTRUCTIVE_COMMANDS:
-        return True
-    if first in _BASH_AUTO_FIRST:
-        return False
-    if first in _BASH_AUTO_ARGS:
-        return not _BASH_AUTO_ARGS[first](parts)
-    if first == "git":
-        return len(parts) < 2 or parts[1] not in _GIT_AUTO_SUBCOMMANDS
-    return True
-
-
-def _auto_approve(name: str, args: Dict[str, Any]) -> bool:
-    """Return True when a tool call is safe enough to run without asking."""
-    if name in _AUTO_TOOLS:
-        return True
-    if name == "bash":
-        return not _bash_needs_approval(str(args.get("command", "")))
-    return False
 
 
 def smart_approve(dashboard: Dashboard) -> Callable[[str, Dict[str, Any]], bool]:
@@ -433,10 +345,16 @@ def main() -> None:
     parser.add_argument(
         "-y", "--yes", action="store_true", help="auto-approve tool calls in single-shot mode"
     )
-    parser.add_argument(
+    view = parser.add_mutually_exclusive_group()
+    view.add_argument(
         "--plain",
         action="store_true",
         help="disable the full-screen live dashboard (plain console output)",
+    )
+    view.add_argument(
+        "--tui",
+        action="store_true",
+        help="use the Textual interface (home, history, memory, settings, approvals)",
     )
     args = parser.parse_args()
 
@@ -446,6 +364,7 @@ def main() -> None:
         and not os.getenv("API_KEY")
         and not os.getenv("CEREBRAS_API_KEY")
         and not (os.getenv("GROQ_API_KEY") or os.getenv("GROK_API_KEY"))
+        and not os.getenv("OPENROUTER_API_KEY")
     ):
         raise RuntimeError("no provider API key found in environment (.env)")
     provider = (os.getenv("PROVIDER") or "nvidia").strip().lower()
@@ -455,6 +374,7 @@ def main() -> None:
         or os.getenv("CEREBRAS_MODEL_ID")
         or os.getenv("GROQ_MODEL_ID")
         or os.getenv("GROK_MODEL_ID")
+        or os.getenv("OPENROUTER_MODEL_ID")
         or ""
     )
     logger.info(
@@ -463,6 +383,26 @@ def main() -> None:
 
     llm = build_client()
     memory = memory_from_env()
+
+    if args.tui:
+        from textual_app import PicoTUI
+
+        from tui_history import HistoryStore
+
+        if args.yes:
+            os.environ["PICO_AUTO_APPROVE"] = "1"
+        app = PicoTUI(
+            llm=llm,
+            memory=memory,
+            provider=provider,
+            model=model,
+            history=HistoryStore(),
+            approve=None,
+            task=args.task,
+        )
+        app.run()
+        return
+
     dashboard = Dashboard(console, provider=provider, model=model, memory=memory)
     if args.plain:
         dashboard.enabled = False

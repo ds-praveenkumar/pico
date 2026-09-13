@@ -102,6 +102,25 @@ def drained_logs() -> List[str]:
         return _capture.drain()
 
 
+def current_log_level() -> str:
+    """Return the name of the current effective logging level."""
+    return logging.getLevelName(_LEVEL)
+
+
+def set_log_level(level: str) -> None:
+    """Change the effective logging level for the whole process at runtime."""
+    global _LEVEL, _LOG_LEVEL
+    resolved = getattr(logging, str(level).upper(), logging.INFO)
+    if not isinstance(resolved, int):
+        resolved = logging.INFO
+    _LEVEL = resolved
+    _LOG_LEVEL = logging.getLevelName(resolved)
+    root = logging.getLogger()
+    root.setLevel(resolved)
+    for name in list(root.manager.loggerDict):
+        logging.getLogger(name).setLevel(resolved)
+
+
 def stop_rich_logging():
     global _listener
     with _lock:
