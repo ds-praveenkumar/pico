@@ -5,7 +5,7 @@ import io
 from rich.console import Console
 
 from brain.memory import Memory
-from dashboard import Dashboard
+from ui import Dashboard
 
 
 def _console() -> Console:
@@ -139,7 +139,7 @@ def test_dashboard_footer_shows_input_line():
 
 
 def test_dashboard_animates_while_running():
-    from dashboard import _SPINNER
+    from ui.dashboard import _SPINNER
 
     dash = Dashboard(console=_console(), provider="nvidia", model="m")
     dash._status = "executing plan…"

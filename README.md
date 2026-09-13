@@ -104,7 +104,7 @@ Pass `--plain` to use the classic console REPL instead.
 
 ### Working view
 
-This is a representative render from the current `dashboard.py` implementation
+This is a representative render from the current `ui/dashboard.py` implementation
 (at a 100-column terminal; values change as tasks run):
 
 ```text

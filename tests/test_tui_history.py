@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 
-from tui_history import HistoryStore, redact
+from ui.tui_history import HistoryStore, redact
 
 _ZERO_USAGE = {"prompt": 0, "completion": 0, "total": 0}
 

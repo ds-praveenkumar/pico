@@ -17,7 +17,7 @@ from textual.widgets import Input, ListView, Switch  # noqa: E402
 
 from brain.memory import Memory  # noqa: E402
 from conftest import FakeLLM  # noqa: E402
-from textual_app import (  # noqa: E402
+from ui.textual_app import (  # noqa: E402
     ApprovalModal,
     CommandPalette,
     HistoryScreen,
@@ -25,7 +25,7 @@ from textual_app import (  # noqa: E402
     PicoTUI,
     SettingsScreen,
 )
-from tui_history import HistoryStore  # noqa: E402
+from ui.tui_history import HistoryStore  # noqa: E402
 
 _ZERO_USAGE = {"prompt": 0, "completion": 0, "total": 0}
 

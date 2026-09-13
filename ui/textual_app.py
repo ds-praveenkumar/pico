@@ -49,9 +49,9 @@ from textual.widgets import (
 from agents.cancellation import CancellationToken, TaskCancelled
 from agents.pico import Pico
 from agents.tools import ask as ask_tools
-from approval import auto_approve
+from agents.approval import auto_approve
 from brain.logging_setup import capture_logs, current_log_level, drained_logs, get_logger, set_log_level
-from tui_history import HistoryStore
+from ui.tui_history import HistoryStore
 
 logger = get_logger(__name__)
 
