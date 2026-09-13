@@ -8,6 +8,7 @@ from .groq_client import GroqClient
 from .openrouter_client import OpenRouterClient
 from .memory import EpisodicMemory, Memory, NotesStore, WorkingMemory
 from .semantic import HashingEmbedding, SemanticMemory
+from .config import DEFAULT_MASTER_NAME, master_name, personalize
 
 __all__ = [
     "BaseLLM",
@@ -22,4 +23,7 @@ __all__ = [
     "Memory",
     "HashingEmbedding",
     "SemanticMemory",
+    "DEFAULT_MASTER_NAME",
+    "master_name",
+    "personalize",
 ]

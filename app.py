@@ -33,10 +33,10 @@ from brain.nvidia_client import NvidiaClient
 from brain.openai_client import OpenAIClient
 from brain.openrouter_client import OpenRouterClient
 
-from approval import auto_approve as _auto_approve, bash_needs_approval as _bash_needs_approval
+from agents.approval import auto_approve as _auto_approve, bash_needs_approval as _bash_needs_approval
 from agents.pico import Pico
 from agents.tools import ask as ask_tools
-from dashboard import Dashboard
+from ui import Dashboard
 
 logger = get_logger(__name__)
 console = Console()
@@ -385,9 +385,9 @@ def main() -> None:
     memory = memory_from_env()
 
     if args.tui:
-        from textual_app import PicoTUI
+        from ui.textual_app import PicoTUI
 
-        from tui_history import HistoryStore
+        from ui.tui_history import HistoryStore
 
         if args.yes:
             os.environ["PICO_AUTO_APPROVE"] = "1"

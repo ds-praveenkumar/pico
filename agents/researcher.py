@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional
 
 from brain.logging_setup import get_logger
+from brain.config import personalize
 
 from agents.base_agent import BaseAgent, openai_tool_schemas
 from agents.tools.skill_read import list_skills
@@ -27,7 +28,7 @@ RESEARCHER_TOOL_NAMES = (
 
 _RESEARCHER_SYSTEM_PROMPT = (
     "You are pico's researcher. You find and verify information for the master, "
-    "Praveen, using the ego-lite browser skill and safe local tools. "
+    "{master}, using the ego-lite browser skill and safe local tools. "
     "Only browse validated http(s) URLs. If the ego-lite browser skill is not "
     "installed yet, stop and report that the skill is missing so the master can "
     "decide whether to build it. "
@@ -51,10 +52,10 @@ _RESEARCHER_SYSTEM_PROMPT = (
     "them from snapshots. When a page shows a CAPTCHA, a login/OTP prompt, or "
     "required form fields, STOP guessing — the result includes 'need_human' "
     "and the browser window is handed to the master on that page. Call "
-    "'ask_master' to let Praveen solve it or provide the details (e.g. 'I hit a "
+    "'ask_master' to let {master} solve it or provide the details (e.g. 'I hit a "
     "CAPTCHA on <url>, please solve it in the open browser and confirm'), and "
     "once they answer, resume the same page. If a browse call returns "
-    "'paused', the tab is parked under Praveen's control from an earlier "
+    "'paused', the tab is parked under {master}'s control from an earlier "
     "hand-off — call 'ask_master' to confirm he is done with it (e.g. 'I've "
     "finished with the tab, please continue'), and once he confirms resume "
     "with action='claim' (this reclaims the space and snapshots it), then "
@@ -98,7 +99,7 @@ class Researcher(BaseAgent):
         )
 
     def system_instructions(self) -> str:
-        return _RESEARCHER_SYSTEM_PROMPT
+        return personalize(_RESEARCHER_SYSTEM_PROMPT)
 
     def browsable(self) -> bool:
         """Return True when the ego-lite browser skill is present."""

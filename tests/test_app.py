@@ -7,7 +7,7 @@ from rich.console import Console
 
 from app import _auto_approve, _bash_needs_approval, PlanView, SessionStats, build_client, run_task
 from brain.memory import Memory
-from dashboard import Dashboard
+from ui import Dashboard
 
 
 def _console() -> Console:
