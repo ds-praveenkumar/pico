@@ -49,23 +49,41 @@
       color: #c3cbd8;
     }
     pre code { background: none; border: none; padding: 0; }
-    .wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; position: relative; }
+
+    /* ---------- reveal & motion ---------- */
+    .reveal { opacity: 0; transform: translateY(22px); transition: opacity .7s ease, transform .7s ease; }
+    .reveal.in { opacity: 1; transform: none; }
+    .reveal.d1 { transition-delay: .08s; }
+    .reveal.d2 { transition-delay: .16s; }
+    .reveal.d3 { transition-delay: .24s; }
+    .reveal.d4 { transition-delay: .32s; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+    @keyframes blink { 50% { opacity: 0; } }
+    @keyframes drift {
+      from { transform: translate(0, 0) scale(1); }
+      to { transform: translate(46px, 28px) scale(1.09); }
+    }
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.25); }
+      50% { box-shadow: 0 0 26px 2px rgba(34, 211, 238, 0.28); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .reveal { opacity: 1; transform: none; transition: none; }
+      .orb, .hero h1 .cursor, .spin-dot { animation: none !important; }
+      html { scroll-behavior: auto; }
+    }
 
     /* ---------- nav ---------- */
     nav {
       position: sticky;
       top: 0;
       z-index: 10;
-      background: rgba(11, 14, 20, 0.92);
-      backdrop-filter: blur(6px);
+      background: rgba(11, 14, 20, 0.86);
+      backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
     }
-    nav .wrap {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: 56px;
-    }
+    nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
     nav .logo {
       font-family: var(--mono);
       font-weight: 700;
@@ -73,17 +91,26 @@
       font-size: 1.05em;
       letter-spacing: 0.5px;
     }
-    nav .links a { color: var(--muted); margin-left: 20px; font-size: 0.92em; }
+    nav .links a { color: var(--muted); margin-left: 20px; font-size: 0.92em; transition: color .2s ease; }
     nav .links a:hover { color: var(--cyan); text-decoration: none; }
 
     /* ---------- hero ---------- */
     header.hero {
+      position: relative;
+      overflow: hidden;
       padding: 90px 0 70px;
       border-bottom: 1px solid var(--border);
-      background:
-        radial-gradient(700px 300px at 15% 0%, rgba(34, 211, 238, 0.08), transparent 60%),
-        radial-gradient(700px 300px at 85% 100%, rgba(52, 211, 153, 0.06), transparent 60%);
     }
+    .orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.16;
+      pointer-events: none;
+    }
+    .orb.o1 { width: 460px; height: 460px; background: #0891b2; top: -140px; left: -100px; animation: drift 16s ease-in-out infinite alternate; }
+    .orb.o2 { width: 400px; height: 400px; background: #15803d; bottom: -160px; right: -80px; animation: drift 20s ease-in-out -8s infinite alternate-reverse; }
+    .hero .wrap { animation: none; }
     .hero .badge {
       display: inline-block;
       font-family: var(--mono);
@@ -94,6 +121,7 @@
       padding: 4px 12px;
       margin-bottom: 24px;
       letter-spacing: 0.5px;
+      animation: fadeUp 0.7s ease both;
     }
     .hero h1 {
       font-family: var(--mono);
@@ -102,13 +130,26 @@
       color: var(--cyan);
       line-height: 1.1;
       margin-bottom: 8px;
+      animation: fadeUp 0.7s ease 0.12s both;
+    }
+    .hero h1 .cursor {
+      display: inline-block;
+      width: 0.5em;
+      height: 0.9em;
+      background: var(--cyan);
+      margin-left: 6px;
+      vertical-align: text-bottom;
+      animation: blink 1.05s steps(1) infinite;
     }
     .hero p.tagline {
       font-size: 1.2rem;
       color: var(--muted);
       max-width: 660px;
+      animation: fadeUp 0.7s ease 0.24s both;
     }
-    .hero .cta { margin-top: 32px; display: flex; gap: 14px; flex-wrap: wrap; }
+    .hero .cta { margin-top: 32px; display: flex; gap: 14px; flex-wrap: wrap; animation: fadeUp 0.7s ease 0.42s both; }
+    .hero pre.ascii { animation: fadeUp 0.7s ease 0.34s both; }
+
     .btn {
       font-family: var(--mono);
       display: inline-block;
@@ -118,13 +159,15 @@
       background: var(--panel);
       color: var(--text);
       font-size: 0.92em;
+      transition: transform .2s ease, border-color .2s ease, color .2s ease, background .2s ease;
     }
-    .btn:hover { text-decoration: none; border-color: var(--cyan); color: var(--cyan); }
+    .btn:hover { text-decoration: none; border-color: var(--cyan); color: var(--cyan); transform: translateY(-2px); }
     .btn-primary {
       background: var(--cyan);
       border-color: var(--cyan);
       color: #06121a;
       font-weight: 700;
+      animation: pulseGlow 3.2s ease-in-out infinite;
     }
     .btn-primary:hover { background: #67e8f9; color: #06121a; }
 
@@ -142,7 +185,6 @@
     section h3 { font-size: 1.05rem; margin: 24px 0 8px; color: var(--text); }
     section p { color: var(--muted); margin-bottom: 14px; }
     section p strong { color: var(--text); }
-
     .lead { font-size: 1.02rem; }
 
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
@@ -152,17 +194,15 @@
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 20px;
+      transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
     }
-    .card h4 {
-      font-family: var(--mono);
-      font-size: 0.95em;
-      color: var(--green);
-      margin-bottom: 8px;
-    }
+    .card:hover { transform: translateY(-4px); border-color: rgba(34, 211, 238, 0.45); box-shadow: 0 14px 34px rgba(0,0,0,.35); }
+    .card h4 { font-family: var(--mono); font-size: 0.95em; color: var(--green); margin-bottom: 8px; }
     .card p { font-size: 0.92em; margin: 0; }
 
     ul.features { list-style: none; margin-top: 8px; }
-    ul.features li { padding: 10px 0; border-bottom: 1px dashed var(--border); font-size: 0.98em; }
+    ul.features li { padding: 10px 0; border-bottom: 1px dashed var(--border); font-size: 0.98em; transition: padding-left .2s ease; }
+    ul.features li:hover { padding-left: 8px; }
     ul.features li:last-child { border-bottom: none; }
     ul.features b { color: var(--cyan); font-family: var(--mono); font-weight: 600; }
 
@@ -173,13 +213,7 @@
       overflow: hidden;
       margin-top: 20px;
     }
-    .term-bar {
-      display: flex;
-      gap: 6px;
-      padding: 10px 14px;
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
-    }
+    .term-bar { display: flex; gap: 6px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); }
     .term-bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
     .term-bar .r { background: var(--red); }
     .term-bar .y { background: var(--yellow); }
@@ -192,28 +226,172 @@
     td { color: var(--muted); }
     td code { white-space: nowrap; }
 
-    footer {
-      padding: 48px 0;
-      text-align: center;
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 0.85em;
-    }
+    footer { padding: 48px 0; text-align: center; color: var(--muted); font-family: var(--mono); font-size: 0.85em; }
     footer code { color: var(--cyan); }
 
-    .ascii {
-      font-family: var(--mono);
-      color: var(--cyan-dim);
-      font-size: 0.75em;
-      line-height: 1.15;
-      margin: 24px 0;
-      user-select: none;
-    }
+    .ascii { font-family: var(--mono); color: var(--cyan-dim); font-size: 0.75em; line-height: 1.15; margin: 24px 0; user-select: none; }
 
     @media (max-width: 760px) {
       .grid2, .grid3 { grid-template-columns: 1fr; }
       nav .links { display: none; }
       header.hero { padding: 60px 0 50px; }
+    }
+
+    /* ---------- TUI demo ---------- */
+    .demo-stage { margin-top: 26px; }
+    .tui {
+      position: relative;
+      background: var(--bg-sunken);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.55;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+    }
+    .tui-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 14px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .tui-bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+    .tui-bar .r { background: var(--red); }
+    .tui-bar .y { background: var(--yellow); }
+    .tui-bar .g { background: var(--green); }
+    .tui-title { flex: 1; text-align: center; color: var(--muted); font-size: 0.9em; }
+    .tui-clock { color: var(--cyan); font-size: 0.9em; min-width: 68px; text-align: right; }
+    .tui-status {
+      padding: 6px 14px;
+      background: #0d1120;
+      border-bottom: 1px solid var(--border);
+      color: #e2e8f0;
+    }
+    .tui-body {
+      display: grid;
+      grid-template-columns: 40% 1fr;
+      gap: 10px;
+      padding: 10px;
+      min-height: 340px;
+    }
+    .tui-panel {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0a0d16;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .tui-panel > .lbl {
+      padding: 5px 10px;
+      color: var(--cyan);
+      font-size: 0.85em;
+      letter-spacing: 0.5px;
+      background: #0d1120;
+      border-bottom: 1px solid var(--border);
+    }
+    .tui-panel .inner { flex: 1; padding: 10px; overflow: hidden; display: flex; flex-direction: column; gap: 5px; }
+    .tui-answer { grid-column: 1 / -1; min-height: 88px; }
+    .tui-answer .inner { gap: 4px; }
+    .ans-line { color: #e2e8f0; }
+    .ans-line.b { color: var(--cyan); font-weight: 700; }
+    .ans-line.dim { color: var(--muted); }
+    .ans-meta { color: var(--muted); margin-top: 6px; font-size: 0.9em; opacity: 0; transition: opacity .5s ease; }
+    .ans-meta.show { opacity: 1; }
+    .tui-right { display: grid; grid-template-rows: 58% 1fr; gap: 10px; min-width: 0; }
+    .tui-plan-row { display: flex; gap: 10px; color: var(--muted); }
+    .tui-plan-row .st { flex: none; width: 74px; }
+    .st-pending { color: var(--cyan); }
+    .st-running { color: var(--yellow); }
+    .st-done { color: var(--green); }
+    .st-failed { color: var(--red); }
+
+    .tui-line { color: #c3cbd8; white-space: pre-wrap; word-break: break-word; font-size: 0.95em; animation: lineIn .25s ease both; }
+    .tui-line .who { color: var(--muted); }
+    .tui-line.tool { color: #9fe8c9; }
+    .tui-line.tool .who { color: var(--green); }
+    .tui-log .tui-line { color: #67708a; font-size: 0.9em; }
+    .tui-log .tui-line .lv { color: #4d5670; }
+    @keyframes lineIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+    .tui-inputbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 14px;
+      background: #0d1120;
+      border-top: 1px solid var(--border);
+    }
+    .tui-usage { color: var(--muted); font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tui-usage b { color: var(--cyan); font-weight: 600; }
+    .tui-run { color: var(--green); min-width: 92px; white-space: nowrap; }
+    .tui-run .spin-dot { display: inline-block; animation: blink 0.9s steps(1) infinite; }
+    .tui-prompt {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      background: #0a0d16;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      min-height: 30px;
+      color: #e2e8f0;
+      overflow: hidden;
+    }
+    .tui-caret { display: inline-block; width: 7px; height: 14px; background: var(--cyan); margin-left: 2px; animation: blink 1s steps(1) infinite; }
+    .tui-keys { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85em; }
+    .tui-keys b { color: var(--cyan); font-weight: 600; }
+
+    .tui-modal {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(5, 7, 12, 0.74);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .25s ease;
+    }
+    .tui-modal.show { opacity: 1; pointer-events: auto; }
+    .tui-modal .box {
+      width: min(430px, 88%);
+      background: var(--panel);
+      border: 1px solid rgba(248, 113, 113, 0.55);
+      border-radius: 10px;
+      padding: 16px 18px;
+      transform: translateY(8px);
+      transition: transform .25s ease;
+    }
+    .tui-modal.show .box { transform: none; }
+    .tui-modal h5 { font-family: var(--mono); color: #f8a5a5; font-size: 1em; margin-bottom: 8px; }
+    .tui-modal p { color: var(--text); font-size: 0.95em; word-break: break-all; }
+    .tui-modal .acts { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+    .tui-modal .acts button {
+      font-family: var(--mono);
+      padding: 7px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .2s ease;
+      font-size: 0.95em;
+    }
+    .tui-modal .acts #m-approve { border-color: rgba(52, 211, 153, 0.5); color: var(--green); }
+    .tui-modal .acts button.hot { background: var(--green); border-color: var(--green); color: #06121a; transform: scale(1.05); }
+
+    .demo-actions { margin-top: 14px; display: flex; gap: 12px; align-items: center; }
+    .demo-actions .hint { color: var(--muted); font-size: 0.88em; }
+
+    @media (max-width: 720px) {
+      .tui-body { grid-template-columns: 1fr; min-height: 0; }
+      .tui-right { grid-template-rows: 200px 140px; }
+      .tui-usage { display: none; }
     }
   </style>
 </head>
@@ -223,6 +401,7 @@
   <div class="wrap">
     <span class="logo">pico</span>
     <span class="links">
+      <a href="#tui-demo">tui demo</a>
       <a href="#features">features</a>
       <a href="#quickstart">quick start</a>
       <a href="#architecture">architecture</a>
@@ -233,9 +412,11 @@
 </nav>
 
 <header class="hero">
+  <div class="orb o1"></div>
+  <div class="orb o2"></div>
   <div class="wrap">
     <span class="badge">personal day-to-day assistant</span>
-    <h1>pico</h1>
+    <h1>pico<span class="cursor"></span></h1>
     <p class="tagline">
       A personal assistant that plans and executes tasks with world-class tools —
       always under the master's supervision — and remembers your choices so it
@@ -251,14 +432,79 @@
     </pre>
     <div class="cta">
       <a class="btn btn-primary" href="https://github.com/ds-praveenkumar/pico" target="_blank" rel="noopener">View on GitHub</a>
+      <a class="btn" href="#tui-demo">Watch the TUI</a>
       <a class="btn" href="#quickstart">Quick start</a>
-      <a class="btn" href="#cli">CLI usage</a>
     </div>
   </div>
 </header>
 
+<section id="tui-demo">
+  <div class="wrap reveal">
+    <h2>TUI demo</h2>
+    <p class="lead">
+      A live simulation of the real <code>--tui</code> interface: pico types your task,
+      plans it, delegates to sub-agents, streams tool output, asks before risky calls,
+      and lands the final answer. The log tail and token counters tick as it works.
+    </p>
+    <div class="demo-stage">
+      <div class="tui" id="tui">
+        <div class="tui-bar">
+          <i class="r"></i><i class="y"></i><i class="g"></i>
+          <span class="tui-title">pico · your day-to-day assistant — nvidia · qwen-coder</span>
+          <span class="tui-clock" id="tui-clock">00:00:00</span>
+        </div>
+        <div class="tui-status" id="tui-status">ready — describe a task below</div>
+        <div class="tui-body">
+          <div class="tui-panel tui-answer">
+            <div class="lbl">pico</div>
+            <div class="inner" id="tui-answer"></div>
+          </div>
+          <div class="tui-panel">
+            <div class="lbl">Task plan</div>
+            <div class="inner" id="tui-plan"></div>
+          </div>
+          <div class="tui-right">
+            <div class="tui-panel tui-out">
+              <div class="lbl">Live output</div>
+              <div class="inner" id="tui-out"></div>
+            </div>
+            <div class="tui-panel tui-log">
+              <div class="lbl">Log tail</div>
+              <div class="inner" id="tui-log"></div>
+            </div>
+          </div>
+        </div>
+        <div class="tui-inputbar">
+          <span class="tui-usage" id="tui-usage">tokens <b>0</b> prompt · <b>0</b> completion · <b>0</b> total · <b>0</b> request(s)</span>
+          <span class="tui-run" id="tui-run"></span>
+          <span class="tui-prompt"><span id="tui-prompt-text"></span><span class="tui-caret"></span></span>
+        </div>
+        <div class="tui-keys">
+          <span><b>ctrl+c</b> cancel</span><span><b>ctrl+k</b> commands</span><span><b>ctrl+n</b> compose</span>
+          <span><b>ctrl+e</b> export</span><span><b>h</b> history</span><span><b>m</b> memory</span>
+          <span><b>s</b> settings</span><span><b>?</b> help</span>
+        </div>
+        <div class="tui-modal" id="tui-modal">
+          <div class="box">
+            <h5>Approval required</h5>
+            <p id="tui-modal-q">pico wants to call bash(...)</p>
+            <div class="acts">
+              <button id="m-reject" type="button">Reject (n)</button>
+              <button id="m-approve" type="button">Approve (y)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="demo-actions">
+        <button class="btn" id="demo-replay" type="button">↻ Replay demo</button>
+        <span class="hint">auto-plays when scrolled into view · this is a scripted mockup, not a live process</span>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="features">
-  <div class="wrap">
+  <div class="wrap reveal">
     <h2>Features</h2>
     <ul class="features">
       <li><b>Multi-agent delegation</b> — <code>pico</code> plans each task and delegates to worker sub-agents: <code>executor</code> (safe file/shell work) and <code>researcher</code> (web/browser research).</li>
@@ -275,7 +521,7 @@
 </section>
 
 <section id="quickstart">
-  <div class="wrap">
+  <div class="wrap reveal">
     <h2>Quick start</h2>
     <p class="lead">pico is a Python project. Set up a virtualenv, install, configure your provider, and run.</p>
     <div class="term">
@@ -291,19 +537,19 @@ python app.py "Summarize README.md" -y   # single-shot, auto-approved tools</cod
 </section>
 
 <section id="architecture">
-  <div class="wrap">
+  <div class="wrap reveal">
     <h2>Architecture</h2>
     <p class="lead">A layered design: import-safe modules, one logical concern per file, and tests for everything.</p>
     <div class="grid3">
-      <div class="card">
+      <div class="card reveal d1">
         <h4>brain/</h4>
         <p>Provider-agnostic LLM clients (all OpenAI-compatible) with token-usage tracking, async rich logging, and the three-layer + semantic memory system.</p>
       </div>
-      <div class="card">
+      <div class="card reveal d2">
         <h4>agents/</h4>
         <p>The <code>pico</code> orchestrator plans and delegates to <code>executor</code>/<code>researcher</code> sub-agents, owns tool dispatch, and exposes plan/step/generate hooks.</p>
       </div>
-      <div class="card">
+      <div class="card reveal d3">
         <h4>tools/</h4>
         <p>Pure, safe functions the agent loop calls — each with a name and schema entry, confined to the project root, sandboxed, and approval-aware.</p>
       </div>
@@ -317,7 +563,7 @@ python app.py "Summarize README.md" -y   # single-shot, auto-approved tools</cod
 </section>
 
 <section id="tools">
-  <div class="wrap">
+  <div class="wrap reveal">
     <h2>Everyday tools</h2>
     <table>
       <thead>
@@ -341,7 +587,7 @@ python app.py "Summarize README.md" -y   # single-shot, auto-approved tools</cod
 </section>
 
 <section id="cli">
-  <div class="wrap">
+  <div class="wrap reveal">
     <h2>CLI usage</h2>
     <div class="term">
       <div class="term-bar"><i class="r"></i><i class="y"></i><i class="g"></i></div>
@@ -367,8 +613,8 @@ python app.py --tui                            # Textual interface (home/history
 </section>
 
 <section id="memory" style="border-bottom:none;">
-  <div class="wrap">
-    <h2>Memory & growth</h2>
+  <div class="wrap reveal">
+    <h2>Memory &amp; growth</h2>
     <p>
       pico keeps working memory (session scratchpad), episodic memory (completed tasks), long-term
       memory (facts and preferences) — all persisted under <code>~/.pico</code> — plus semantic memory
@@ -384,6 +630,225 @@ python app.py --tui                            # Textual interface (home/history
     <p style="margin-top:8px;">Run it yourself: <code>pip install -r requirements.txt && python app.py</code></p>
   </div>
 </footer>
+
+<script>
+(function () {
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function $(id) { return document.getElementById(id); }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /* ---- scroll reveals ---- */
+  var revealEls = document.querySelectorAll(".reveal");
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.12 });
+    revealEls.forEach(function (el) { io.observe(el); });
+  } else {
+    revealEls.forEach(function (el) { el.classList.add("in"); });
+  }
+
+  /* ---- TUI header clock ---- */
+  var clockEl = $("tui-clock");
+  function tickClock() {
+    var d = new Date();
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    clockEl.textContent = p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  /* ---- TUI demo engine ---- */
+  var statusEl = $("tui-status"), answerEl = $("tui-answer"), planEl = $("tui-plan"),
+      outEl = $("tui-out"), logEl = $("tui-log"), usageEl = $("tui-usage"),
+      runEl = $("tui-run"), promptEl = $("tui-prompt-text"),
+      modalEl = $("tui-modal"), modalQ = $("tui-modal-q"),
+      approveBtn = $("m-approve");
+
+  var usage = { prompt: 0, completion: 0, total: 0, requests: 0 };
+  var running = false, spinnerTimer = null, playing = false;
+  var SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+  function renderUsage() {
+    usageEl.innerHTML = "tokens <b>" + usage.prompt.toLocaleString() + "</b> prompt · <b>" +
+      usage.completion.toLocaleString() + "</b> completion · <b>" + usage.total.toLocaleString() +
+      "</b> total · <b>" + usage.requests + "</b> request(s)";
+  }
+  function bumpUsage(p, c, req) {
+    usage.prompt += p; usage.completion += c; usage.total += p + c;
+    if (req) usage.requests += req;
+    renderUsage();
+  }
+  function setStatus(t) { statusEl.textContent = t; }
+  function setRunning(v) {
+    running = v;
+    if (v) {
+      var i = 0;
+      spinnerTimer = setInterval(function () {
+        runEl.innerHTML = SPIN[i++ % SPIN.length] + " working";
+      }, 140);
+    } else {
+      if (spinnerTimer) clearInterval(spinnerTimer);
+      spinnerTimer = null;
+      runEl.innerHTML = "";
+    }
+  }
+  function addLine(el, who, text, tool) {
+    var div = document.createElement("div");
+    div.className = "tui-line" + (tool ? " tool" : "");
+    div.innerHTML = (who ? '<span class="who">' + esc(who) + " › </span>" : "") + esc(text);
+    el.appendChild(div);
+    while (el.children.length > 40) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
+  }
+  function addLog(text) {
+    addLine(logEl, null, text);
+    logEl.lastChild.innerHTML = '<span class="lv">INFO</span> :: ' + esc(text);
+  }
+  function renderPlan(steps) {
+    planEl.innerHTML = "";
+    steps.forEach(function (s) {
+      var row = document.createElement("div");
+      row.className = "tui-plan-row";
+      row.innerHTML = '<span class="st st-pending">● pending</span><span>' +
+        esc(s.agent) + ": " + esc(s.task) + "</span>";
+      planEl.appendChild(row);
+    });
+  }
+  function markStep(i, status) {
+    var row = planEl.children[i];
+    if (!row) return;
+    var st = row.querySelector(".st");
+    st.className = "st st-" + status;
+    st.textContent = status === "running" ? "▶ running" : (status === "done" ? "✓ done" : "✗ failed");
+  }
+  function typeInto(el, text, cps) {
+    return new Promise(function (resolve) {
+      if (reduced) { el.textContent = text; resolve(); return; }
+      var i = 0;
+      var t = setInterval(function () {
+        el.textContent = text.slice(0, ++i);
+        if (i >= text.length) { clearInterval(t); resolve(); }
+      }, 1000 / cps);
+    });
+  }
+  function showModal(q) {
+    return new Promise(function (resolve) {
+      modalQ.textContent = q;
+      approveBtn.classList.remove("hot");
+      modalEl.classList.add("show");
+      setTimeout(function () {
+        approveBtn.classList.add("hot");
+        setTimeout(function () {
+          modalEl.classList.remove("show");
+          resolve(true);
+        }, reduced ? 200 : 650);
+      }, reduced ? 250 : 900);
+    });
+  }
+  function resetDemo() {
+    answerEl.innerHTML = ""; planEl.innerHTML = ""; outEl.innerHTML = ""; logEl.innerHTML = "";
+    promptEl.textContent = "";
+    usage = { prompt: 0, completion: 0, total: 0, requests: 0 };
+    renderUsage();
+    setRunning(false);
+    setStatus("ready — describe a task below");
+  }
+
+  async function playDemo() {
+    if (playing) return;
+    playing = true;
+    resetDemo();
+    await sleep(reduced ? 100 : 500);
+    addLog("pico :: Provider ready: nvidia (model=qwen-coder)");
+
+    await typeInto(promptEl, "summarize the README and check the weather in Bengaluru", 34);
+    await sleep(reduced ? 100 : 450);
+    promptEl.textContent = "";
+    setStatus("working on your task…");
+    setRunning(true);
+
+    renderPlan([
+      { agent: "executor", task: "Read README.md and summarize" },
+      { agent: "executor", task: "fetch today's weather for Bengaluru" }
+    ]);
+    bumpUsage(312, 48, 1);
+    await sleep(reduced ? 100 : 600);
+
+    markStep(0, "running");
+    addLine(outEl, "pico", "Delegating executor: Read README.md and summarize");
+    await sleep(reduced ? 100 : 700);
+    addLine(outEl, "executor", '[file_read] {"ok": true, "path": "README.md", "bytes": 12480, "lines": 311}', true);
+    bumpUsage(540, 92, 1);
+    await sleep(reduced ? 100 : 700);
+    addLine(outEl, "executor", "tool task done — summary captured for the orchestrator");
+    bumpUsage(596, 64, 1);
+    markStep(0, "done");
+    await sleep(reduced ? 100 : 500);
+
+    markStep(1, "running");
+    addLine(outEl, "pico", "Delegating executor: fetch today's weather for Bengaluru");
+    bumpUsage(348, 40, 1);
+    await sleep(reduced ? 100 : 650);
+    addLine(outEl, "executor", '[weather] {"ok": true, "location": "Bengaluru, India", "current": {"temperature_c": 25.4, "condition": "Partly cloudy"}}', true);
+    bumpUsage(431, 78, 1);
+    await sleep(reduced ? 100 : 550);
+    markStep(1, "done");
+
+    await showModal("pico wants to call bash(uptime) — approve?");
+    addLine(outEl, "executor", '[bash] {"ok": true, "output": "up 3 days, 14:02, 2 users"}', true);
+    addLog("app.py :: auto-approved bash(uptime)");
+    bumpUsage(287, 22, 1);
+    await sleep(reduced ? 100 : 500);
+
+    bumpUsage(356, 141, 1);
+    var answer = [
+      { t: "Here's your summary:", c: "b" },
+      { t: "• pico is a supervised multi-agent CLI assistant (brain / agents / tools).", c: "" },
+      { t: "• Bengaluru now: 25.4°C, partly cloudy — light breeze.", c: "" },
+      { t: "• Machine uptime: 3 days — nothing needs attention.", c: "" }
+    ];
+    for (var i = 0; i < answer.length; i++) {
+      var line = document.createElement("div");
+      line.className = "ans-line " + answer[i].c;
+      line.textContent = answer[i].t;
+      answerEl.appendChild(line);
+      await sleep(reduced ? 30 : 260);
+    }
+    var meta = document.createElement("div");
+    meta.className = "ans-meta show";
+    meta.textContent = "summarize the README… · tokens 2,874 prompt · 485 completion · 3,359 total · 7 request(s)";
+    answerEl.appendChild(meta);
+
+    setRunning(false);
+    setStatus("ready for your next task");
+    addLog("app.py :: task finished");
+    await sleep(reduced ? 300 : 2200);
+    playing = false;
+  }
+
+  var demoSection = document.getElementById("tui-demo");
+  var started = false;
+  if ("IntersectionObserver" in window) {
+    var dio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting && !started) { started = true; playDemo(); dio.unobserve(e.target); }
+      });
+    }, { threshold: 0.3 });
+    dio.observe(demoSection);
+  } else {
+    started = true; playDemo();
+  }
+  $("demo-replay").addEventListener("click", function () { started = true; playDemo(); });
+})();
+</script>
 
 </body>
 </html>
