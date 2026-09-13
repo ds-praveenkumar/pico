@@ -25,7 +25,7 @@ from rich.markup import escape
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -72,6 +72,7 @@ class PicoTUI(App):
 
     TITLE = "pico"
     SUB_TITLE = "your day-to-day assistant"
+    enabled: bool = True
 
     CSS = """
     Screen {
@@ -891,6 +892,9 @@ class HelpScreen(BaseScreen):
                 ),
                 markup=True,
             )
+        yield Horizontal(Button("Back", id="back-btn", variant="default"), classes="back-row")
+
+
 class ApprovalModal(ModalScreen[bool]):
     """Yes/no approval prompt for a higher-risk tool call."""
 
