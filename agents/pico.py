@@ -26,7 +26,12 @@ _PLAN_INSTRUCTION = (
     'plan an executor step such as {"agent": "executor", "task": "find out today\'s date and time with the current_date tool"} '
     "instead of answering directly. For today's news / latest-headlines requests, plan an "
     'executor step such as {"agent": "executor", "task": "fetch today\'s top news with the latest_news tool"} '
-    "instead of answering from memory."
+    "instead of answering from memory. For email requests (read, list, check the "
+    "inbox, latest messages), plan an executor step that calls the gmail tools "
+    "DIRECTLY, e.g. "
+    '{"agent": "executor", "task": "list the latest emails using the gmail_list tool"} — '
+    "Gmail OAuth is already configured for the master, so never plan a step that "
+    "asks the master for OAuth credentials or email access details."
 )
 
 

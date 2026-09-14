@@ -202,8 +202,7 @@ class BaseAgent:
         UI event loop stays reactive: LLM calls run in worker threads and approval
         callbacks may be coroutines (e.g. Textual modal screens).
         """
-        if not self.llm.tools:
-            self.llm.tools = self.tools
+        self.llm.tools = self.tools
 
         for turn in range(self.max_turns):
             if self.cancel_token is not None:
@@ -229,8 +228,7 @@ class BaseAgent:
         until the LLM answers without a tool call, and the answer is returned
         to the caller.
         """
-        if not self.llm.tools:
-            self.llm.tools = self.tools
+        self.llm.tools = self.tools
 
         for turn in range(self.max_turns):
             if self.cancel_token is not None:

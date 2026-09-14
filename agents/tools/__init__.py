@@ -151,19 +151,19 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "gmail_list": {
         "callable": gmail_oauth.list_emails,
-        "description": "List the master's Gmail inbox messages via OAuth (read-only). Optional 'query' filters with Gmail search syntax (e.g. 'from:x@y.com', 'subject:meeting'); 'unread_only' limits to unseen; 'max_results' caps the count.",
+        "description": "List the master's Gmail inbox messages via OAuth (read-only). OAuth is already configured for the master — call this directly; never ask the master for credentials. Optional 'query' filters with Gmail search syntax (e.g. 'from:x@y.com', 'subject:meeting'); 'unread_only' limits to unseen; 'max_results' caps the count.",
         "parameters": {"query": str, "unread_only": bool, "max_results": int},
         "optional": ["query", "unread_only", "max_results"],
     },
     "gmail_search": {
         "callable": gmail_oauth.search_emails,
-        "description": "Search the master's Gmail for messages matching a Gmail search query (read-only, OAuth). Returns matching subjects, senders, and dates.",
+        "description": "Search the master's Gmail for messages matching a Gmail search query (read-only, OAuth, already configured — call directly; never ask the master for credentials). Returns matching subjects, senders, and dates.",
         "parameters": {"query": str, "max_results": int},
         "optional": ["max_results"],
     },
     "gmail_read": {
         "callable": gmail_oauth.read_email,
-        "description": "Read one email's full content from the master's Gmail by message ID (read-only, OAuth).",
+        "description": "Read one email's full content from the master's Gmail by message ID (read-only, OAuth, already configured — call directly; never ask the master for credentials).",
         "parameters": {"message_id": str},
     },
     "gmail_send": {

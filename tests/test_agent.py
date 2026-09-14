@@ -89,6 +89,21 @@ def test_researcher_toolset_is_browser_focused():
     assert "latest_news" not in names
 
 
+def test_shared_llm_gets_each_agents_own_toolset(fake_llm):
+    llm = fake_llm
+    executor = Executor(name="executor", llm=llm)
+    researcher = Researcher(name="researcher", llm=llm)
+    researcher.run("browse a site")
+    researcher_names = {t["function"]["name"] for t in llm.tools}
+    assert "gmail_list" not in researcher_names
+    assert "ego_lite_browse_use" in researcher_names
+    executor.run("Read README.md")
+    executor_names = {t["function"]["name"] for t in llm.tools}
+    assert "gmail_list" in executor_names
+    assert "file_read" in executor_names
+    assert "ego_lite_browse_use" in executor_names
+
+
 def test_researcher_detects_browsable_skill():
     researcher = Researcher(name="researcher", llm=SimpleNamespace(tools=None))
     assert researcher.browsable() is True
