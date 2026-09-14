@@ -49,8 +49,8 @@ choices so it can serve you better over time.
 - **Google Sheets**: pico reads and appends to your spreadsheets — the durable
   home for the **expense-planner** skill's ledger. Reads run automatically;
   appends/updates pause for your approval. See [Google Sheets setup](#google-sheets-setup-oauth2).
-- **Skills**: declarative YAML skills teach pico domain workflows — browser use,
-  Gmail, **gym routines**, and **expense planning**.
+- **Skills**: declarative YAML skills teach pico domain workflows — browser use
+  (ego-lite), Gmail, **gym routines**, and **expense planning**.
 - **Auto-compaction**: long tool-loop conversations are folded into a one-call
   summary when they cross `PICO_COMPACTION_TOKENS` (default 24000), so the context
   window never blows up mid-task.

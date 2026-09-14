@@ -81,8 +81,8 @@ class PicoTUI(App):
 
     #statusbar {
         dock: top;
-        height: 1;
-        padding: 0 1;
+        height: 2;
+        padding: 0 2;
         color: $text;
         background: $primary-darken-2;
         text-style: bold;
@@ -91,8 +91,8 @@ class PicoTUI(App):
     #answer-area {
         height: 30%;
         border: round $primary;
-        margin: 0 1;
-        padding: 0 1;
+        margin: 0 2;
+        padding: 0 2;
     }
 
     #meta {
@@ -101,13 +101,13 @@ class PicoTUI(App):
 
     #main {
         height: 1fr;
-        padding: 0 1 1 1;
+        padding: 1 2;
     }
 
     #plan-pane {
         width: 2fr;
         border: round $accent;
-        padding: 0 1;
+        padding: 0 2;
     }
 
     #stream-pane {
@@ -117,19 +117,19 @@ class PicoTUI(App):
     #output {
         height: 62%;
         border: round $panel;
-        padding: 0 1;
+        padding: 0 2;
     }
 
     #log {
         height: 38%;
         border: round $panel;
-        padding: 0 1;
+        padding: 0 2;
     }
 
     #inputbar {
         dock: bottom;
-        height: 3;
-        padding: 0 1;
+        height: 5;
+        padding: 1 2;
         background: $background;
     }
 
@@ -150,24 +150,31 @@ class PicoTUI(App):
         width: 1fr;
     }
 
+    HistoryScreen,
+    MemoryScreen,
+    SettingsScreen,
+    HelpScreen {
+        padding: 1 2;
+    }
+
     .screen-title {
-        height: 1;
+        height: 2;
         text-style: bold;
         color: $accent;
-        padding: 0 1;
+        padding: 0 2;
     }
 
     .back-row {
-        height: 3;
-        padding: 0 1;
+        height: 5;
+        padding: 1 2;
     }
 
     .modal-box {
         width: 76;
-        max-height: 20;
+        max-height: 24;
         border: round $primary;
         background: $surface;
-        padding: 1 2;
+        padding: 2 3;
     }
 
     .hint {
@@ -177,6 +184,7 @@ class PicoTUI(App):
     #compose-area {
         height: 10;
         border: round $accent;
+        padding: 0 1;
     }
     """
 

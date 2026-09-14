@@ -64,6 +64,22 @@ async def test_tui_boots_and_displays_bindings(tmp_path):
         assert len(app.BINDINGS) > 5
 
 
+async def test_tui_home_layout_keeps_roomier_spacing(tmp_path):
+    """The home view spends extra rows on spacing without collapsing any pane."""
+    app = _build_tui(tmp_path)
+    async with app.run_test(size=(120, 45)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#statusbar").region.height == 2
+        assert app.query_one("#inputbar").region.height == 5
+        for widget_id in ("#answer-area", "#plan-pane", "#output", "#log", "#prompt"):
+            assert app.query_one(widget_id).content_region.height > 0, widget_id
+        assert (
+            app.query_one("#usage").content_region.y
+            == app.query_one("#running").content_region.y
+            == app.query_one("#prompt").content_region.y
+        )
+
+
 async def test_tui_submits_task_and_records_history(tmp_path):
     app = _build_tui(tmp_path, history_enabled=True)
     async with app.run_test() as pilot:

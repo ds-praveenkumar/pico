@@ -402,6 +402,101 @@ def test_browse_reports_need_human_on_login_form(monkeypatch):
     assert result["need_human"]["kind"] == "login"
 
 
+def test_browse_ignores_login_keyword_without_password_field(monkeypatch):
+    """Login heuristic should NOT fire on a page with 'sign in' text but no password field."""
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'Welcome to Example'\n"
+        "button [ref=1, loc=css:a, label=Sign in]\n"
+        "textbox [ref=2, loc=css:input[name=q], label=Search]\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com")
+    assert result["ok"] is True
+    assert "need_human" not in result, "Should not flag login without password field"
+
+
+def test_browse_reports_login_only_with_password_field(monkeypatch):
+    """Login heuristic SHOULD fire when a password field is present."""
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com/login\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "textbox [ref=4, loc=css:input#email]\n"
+        "password [ref=5, loc=css:input[type=password]]\n"
+        "button [ref=6, loc=css:button, label=Sign in]\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com/login")
+    assert result["ok"] is True
+    assert result["need_human"]["kind"] == "login"
+
+
+def test_browse_ignores_form_keyword_without_required_marker(monkeypatch):
+    """Form heuristic should NOT fire on a page with 'please enter' but no required marker."""
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'Contact us'\n"
+        "textbox [ref=1, loc=css:input[name=name], label=Your name]\n"
+        "textbox [ref=2, loc=css:input[name=msg], label=Message]\n"
+        "button [ref=3, loc=css:button, label=Send]\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com")
+    assert result["ok"] is True
+    assert "need_human" not in result, "Should not flag form without required marker"
+
+
+def test_browse_reports_form_with_required_marker(monkeypatch):
+    """Form heuristic SHOULD fire when 'required' marker is present."""
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com/register\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'Registration'\n"
+        "textbox [ref=1, loc=css:input[name=email], label=Email is required]\n"
+        "textbox [ref=2, loc=css:input[name=name], label=Name is required]\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com/register")
+    assert result["ok"] is True
+    assert result["need_human"]["kind"] == "form_input"
+
+
+def test_browse_reports_form_with_mandatory_marker(monkeypatch):
+    """Form heuristic SHOULD fire when 'mandatory' marker is present."""
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com/register\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'Registration'\n"
+        "textbox [ref=1, loc=css:input[name=email], label=Email is a mandatory field]\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com/register")
+    assert result["ok"] is True
+    assert result["need_human"]["kind"] == "form_input"
+
+
 def test_browse_reports_paused_when_master_owns_space(monkeypatch):
     stdout = "SESSION_PAUSED: the master currently owns this task space; browser commands are paused.\n"
     fake = _fake_proc(stdout)
@@ -417,6 +512,10 @@ def test_browse_reports_paused_when_master_owns_space(monkeypatch):
     assert "action='claim'" in result["hint"]
     assert "existing.ownership === 'user'" in captured["script"]
     assert "if (!paused)" in captured["script"]
+    # New fields for self-healing
+    assert "space_id" in result
+    assert "next_step" in result
+    assert result["next_step"] is not None
 
 
 def test_browse_claim_action_resumes_master_owned_space(monkeypatch):
@@ -438,7 +537,7 @@ def test_browse_claim_action_resumes_master_owned_space(monkeypatch):
     result = browse("https://example.com/after", action="claim")
     assert result["ok"] is True
     assert result.get("claimed") is True
-    assert "existing.ownership === 'user' || CLAIM_ROUND" in captured["script"]
+    assert "existing.ownership === 'agentDelegatedToUser'" in captured["script"]
     assert "claimTaskSpace(existing.id)" in captured["script"]
     assert "CLAIM_ROUND" in captured["script"]
 
@@ -640,3 +739,33 @@ def test_registry_has_current_date():
     result = dispatch("current_date")
     assert result["ok"] is True
     assert result["date"]
+
+
+def test_ego_lite_browse_press_generates_keyboard_press(monkeypatch):
+    """ego-lite should support action='press' to submit forms via Enter key."""
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+
+    def fake_run(script, timeout):
+        captured["script"] = script
+        return _snapshot_proc()
+
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", fake_run)
+    result = browse("https://example.com", action="press")
+    assert result["ok"] is True
+    assert "page.keyboard.press" in captured["script"]
+    assert "Enter" in captured["script"]
+
+
+def test_ego_lite_browse_press_custom_key(monkeypatch):
+    """press should use the query value as the key, defaulting to Enter."""
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+
+    def fake_run(script, timeout):
+        captured["script"] = script
+        return _snapshot_proc()
+
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", fake_run)
+    browse("https://example.com", action="press", query="Tab")
+    assert 'page.keyboard.press("Tab")' in captured["script"]

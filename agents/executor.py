@@ -38,7 +38,19 @@ _EXECUTOR_SYSTEM_PROMPT = (
     "and report its headlines — never invent news from memory. "
     "When a page or task needs something only the master has — a CAPTCHA to "
     "solve, login/OTP details, a file upload, or any personal field pico cannot "
-    "guess — stop and call ask_master instead of inventing it."
+    "guess — stop and call ask_master instead of inventing it. When a browse "
+    "result includes 'need_human', the browser page is handed to the master: "
+    "ask them via ask_master to type the CAPTCHA (and any required fields) and "
+    "submit the form in the open browser window themselves, then confirm when "
+    "done — never fill a CAPTCHA answer yourself. "
+    "If ego_lite_browse_use returns a result with 'paused': True, the browser tab "
+    "is parked under the master's control. This is a RECOVERY situation: "
+    "1. Call ask_master immediately to confirm the master is done with the tab. "
+    "2. If they confirm (or any response indicating they want you to continue), "
+    "call ego_lite_browse_use with action='claim' (no url needed) to reclaim the "
+    "space, snapshot the page, and read the result. 3. Continue with the task. "
+    "The paused result includes next_step fields with exact instructions. "
+    "NEVER end the task while paused — the browser is still open."
 )
 
 

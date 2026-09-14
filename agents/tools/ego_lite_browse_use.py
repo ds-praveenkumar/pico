@@ -22,25 +22,41 @@ The bridge is safe by construction:
 Human-in-the-loop: when the page shows a CAPTCHA, a login/OTP prompt, or a
 required form, the script hands the space off to the master with
 ``task.handOff()`` (the ego-lite browser window stays open on that page) and
-reports ``need_human`` instead of guessing. The next call resumes the same
-space with ``takeOverTaskSpace``/``claimTaskSpace``.
+reports ``need_human`` instead of guessing. The master types the CAPTCHA (and
+any required fields) and submits the form in the open browser window
+themselves; the next call reclaims the space with
+``takeOverTaskSpace``/``claimTaskSpace`` (``action='claim'``) to read the
+result page, never re-triggering a hand-off on the same page.
 
 Actions: ``load`` (default) navigates and snapshots; ``click`` operates on
 ``selector``; ``fill`` types ``query`` into ``selector``; ``select`` selects the
-``query`` option in the ``selector`` dropdown; ``claim`` re-claims a
+``query`` option in the ``selector`` dropdown; ``press`` sends the ``query`` key
+(default Enter) to submit a form; ``screenshot`` saves a full-page screenshot to
+a timestamped file; ``claim`` re-claims a
 master-owned (handed-off) task space after the master confirms they are done
 with the tab, then acts like ``load``; ``release`` finishes the agent-owned task
 space so the browser claim is freed for the next task (never closes a space the
 master is currently using). Selectors accept the refs and
 locators shown in the previous snapshot (``@6``, ``ref=6``, ``loc=css:...``,
 ``loc=role:button[name='...']``, or CSS).
+
+When a page needs a human (CAPTCHA/login/required form) the script saves the
+CAPTCHA image — and the audio CAPTCHA when the page exposes one — to a
+timestamped file so the master can read or hear it even though the browser is
+headless, then hands the space off and reports ``need_human`` with the saved
+paths. Files go to the current working directory unless ``PICO_ARTIFACTS_DIR``
+overrides it.
 """
 
 import json
+import os
 import platform
+import re
 import shutil
 import subprocess
-from typing import Dict, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from brain.logging_setup import get_logger
@@ -55,6 +71,7 @@ DEFAULT_MAX_CHARS = 6000
 TASK_SPACE_NAME = "pico: research"
 
 _ACTION_TIMEOUT_MS = 6000
+_ARTIFACTS_ENV = "PICO_ARTIFACTS_DIR"
 
 _SNAPSHOT_BEGIN = "---SNAPSHOT-BEGIN---"
 _SNAPSHOT_END = "---SNAPSHOT-END---"
@@ -101,9 +118,12 @@ _INPUT_ROLE_RE = r"(textbox|combobox|password|checkbox|radio button|textfield|in
 
 _HUMAN_MESSAGES = {
     "captcha": (
-        "CAPTCHA or bot-check detected — pico cannot solve it. Ask the master "
-        "through 'ask_master'; the ego-lite browser window is open on this page "
-        "and waiting for them to solve it. After they confirm, resume browsing."
+        "CAPTCHA or bot-check detected — pico cannot solve it. The ego-lite "
+        "browser window is open on this page and handed to the master: ask them "
+        "to type the CAPTCHA characters into the field and click the "
+        "search/submit button in the open browser window themselves, then "
+        "confirm. After they confirm, resume with action='claim' and read the "
+        "result page."
     ),
     "login": (
         "Login, OTP, or two-factor prompt detected — pico must never guess "
@@ -119,6 +139,20 @@ _HUMAN_MESSAGES = {
 }
 
 
+def _kind_for(text: str) -> Optional[str]:
+    """Classify a page for CAPTCHA/login/required-form involvement (Python-side fallback)."""
+    lower = (text or "").lower()
+    has_input = re.search(_INPUT_ROLE_RE, lower) is not None
+    has_password = "password" in lower
+    if any(k in lower for k in _CAPTCHA_HINTS):
+        return "captcha"
+    if any(k in lower for k in _LOGIN_HINTS) and has_password:
+        return "login"
+    if any(k in lower for k in _FORM_HINTS) and has_input and ("required" in lower or "mandatory" in lower):
+        return "form_input"
+    return None
+
+
 def _is_safe_url(url: str) -> bool:
     """Return True when the URL is a valid http(s) URL with a hostname."""
     try:
@@ -131,6 +165,72 @@ def _is_safe_url(url: str) -> bool:
 def browser_available() -> bool:
     """Return True when the ego-browser CLI is on PATH."""
     return shutil.which(EGO_BROWSER_BIN) is not None
+
+
+def artifacts_dir() -> Path:
+    """Return the directory where browser artifacts (CAPTCHA images, screenshots) are saved.
+
+    Defaults to the current working directory so the master can open the files
+    pico writes without hunting for them; override with ``PICO_ARTIFACTS_DIR``.
+    """
+    override = os.getenv(_ARTIFACTS_ENV, "").strip()
+    directory = Path(override).expanduser() if override else Path.cwd()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:  # noqa: BLE001 - fall back rather than fail the browse
+        logger.debug("could not create artifacts dir %s: %s", directory, exc)
+        return Path.cwd()
+    return directory
+
+
+def _capture_paths() -> Dict[str, str]:
+    """Return timestamped artifact paths for one browser round (never overwrites old files)."""
+    directory = artifacts_dir()
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    return {
+        "captcha_image": str(directory / f"captcha-{stamp}.png"),
+        "captcha_audio": str(directory / f"captcha-audio-{stamp}.wav"),
+        "screenshot": str(directory / f"screenshot-{stamp}.png"),
+    }
+
+
+def _captcha_capture_lines(image_path: str, audio_path: str, fallback_shot: str) -> List[str]:
+    """Return Node lines that save the page's CAPTCHA image (and audio CAPTCHA) to disk.
+
+    The ego-lite browser is often headless, so the master cannot read a CAPTCHA
+    on screen. The script fetches the CAPTCHA image element through
+    ``page.fetch(..., {saveAs})`` (page cookies are used) and falls back to a
+    full-page screenshot when no CAPTCHA image element exists. When the page
+    exposes an audio CAPTCHA, that is saved too so the master can listen to it.
+    """
+    lines = [
+        "    try {",
+        "      const capSrc = await page.evaluate(() => {",
+        "        const imgs = Array.from(document.querySelectorAll('img'));",
+        "        const hit = imgs.find(i => /captcha/i.test((i.id || '') + ' ' + (i.alt || '') + ' ' + (i.src || '')));",
+        "        return hit ? hit.src : null;",
+        "      });",
+        "      if (capSrc) {",
+        f"        await page.fetch(capSrc, {{ saveAs: {_literal(image_path)} }});",
+        f"        console.log('CAPTCHA_IMAGE:' + {_literal(image_path)});",
+        "      } else {",
+        f"        await page.screenshot({{ path: {_literal(fallback_shot)} }});",
+        f"        console.log('CAPTCHA_IMAGE:' + {_literal(fallback_shot)});",
+        "      }",
+        "    } catch (e) { console.log('CAPTCHA_SAVE_ERROR: ' + (e && e.message ? e.message : e)); }",
+    ]
+    if audio_path:
+        lines += [
+            "    try {",
+            "      const audioSrc = await page.evaluate(() => {",
+            "        const nodes = Array.from(document.querySelectorAll('audio source, audio[src]'));",
+            "        const urls = nodes.map(n => n.src || n.getAttribute('src') || '');",
+            "        return urls.find(u => /play|audio|wav|captcha/i.test(u)) || null;",
+            "      });",
+            f"      if (audioSrc) {{ await page.fetch(audioSrc, {{ saveAs: {_literal(audio_path)} }}); console.log('CAPTCHA_AUDIO:' + {_literal(audio_path)}); }}",
+            "    } catch (e) { console.log('CAPTCHA_AUDIO_ERROR: ' + (e && e.message ? e.message : e)); }",
+        ]
+    return lines
 
 
 def _raise_ego_lite_window() -> bool:
@@ -186,6 +286,7 @@ def _script_for(
     selector: Optional[str],
     query: Optional[str],
     timeout_ms: int,
+    capture: Optional[Dict[str, str]] = None,
 ) -> str:
     """Build the ego-lite Node script for one navigate/act/release + snapshot round.
 
@@ -202,6 +303,7 @@ def _script_for(
     master's control is never closed (``RELEASE_SKIPPED``).
     """
     sel = _js_selector(selector or "")
+    capture = capture or {}
     claim_round = action == "claim"
     release_round = action == "release"
     lines = [
@@ -215,9 +317,10 @@ def _script_for(
         "  function kindFor(text) {",
         "    const t = (text || '').toLowerCase();",
         "    const hasInput = /" + _INPUT_ROLE_RE + "/.test(t);",
+        "    const hasPasswordInput = /type\\s*=\\s*[\"\x27]?password/i.test(t) || /password/i.test(t);",
         "    if (CAPTCHA_KW.some(k => t.includes(k))) return 'captcha';",
-        "    if (LOGIN_KW.some(k => t.includes(k)) && hasInput) return 'login';",
-        "    if (FORM_KW.some(k => t.includes(k)) && hasInput) return 'form_input';",
+        "    if (LOGIN_KW.some(k => t.includes(k)) && hasPasswordInput) return 'login';",
+        "    if (FORM_KW.some(k => t.includes(k)) && hasInput && (/required/i.test(t) || /mandatory/i.test(t))) return 'form_input';",
         "    return null;",
         "  }",
         "  let task;",
@@ -240,18 +343,14 @@ def _script_for(
         "    }",
         "    return;",
         "  }",
-        "  if (existing && !CLAIM_ROUND && existing.ownership === 'user') {",
+        "  const delegated = existing ? (existing.ownership === 'user' || existing.ownership === 'agentDelegatedToUser') : false;",
+        "  if (existing && !CLAIM_ROUND && delegated) {",
         "    paused = true;",
-        "    console.log('SESSION_PAUSED: the master currently owns this task space (it was handed off to them); browser commands are paused until they continue. Never claim a user-owned space on your own: ask the master through ask_master whether they are done with the tab, and resume with action=claim only after they say to continue.');",
+        "    console.log('SESSION_PAUSED: the master currently owns task space id=' + existing.id + ' (it was handed off to them); browser commands are paused until they continue. Never take a master-owned space back on your own: ask the master through ask_master whether they are done with the tab, and resume with action=claim only after they say to continue.');",
         "  } else if (existing) {",
         "    try {",
-        "      if (existing.ownership === 'user' || CLAIM_ROUND) {",
-        "        try { task = await claimTaskSpace(existing.id); }",
-        "        catch (e) { task = await takeOverTaskSpace(existing.id); }",
-        "      } else {",
-        "        try { task = await takeOverTaskSpace(existing.id); }",
-        "        catch (e) { task = await claimTaskSpace(existing.id); }",
-        "      }",
+        "      try { task = await takeOverTaskSpace(existing.id); }",
+        "      catch (e) { task = await claimTaskSpace(existing.id); }",
         "      const tabs = await task.tabs();",
         "      const active = tabs.find(t => t.active) || tabs[0];",
         "      if (active && !active.label) {",
@@ -314,6 +413,24 @@ def _script_for(
             "    console.log('ACTION_ERROR: ' + (e && e.message ? e.message : e));",
             "  }",
         ]
+    elif action == "press":
+        lines += [
+            "  try {",
+            f"    await page.keyboard.press({_literal(query or 'Enter')});",
+            "  } catch (e) {",
+            "    console.log('ACTION_ERROR: ' + (e && e.message ? e.message : e));",
+            "  }",
+        ]
+    elif action == "screenshot":
+        shot = capture.get("screenshot") or ""
+        lines += [
+            "  try {",
+            f"    await page.screenshot({{ path: {_literal(shot)} }});",
+            f"    console.log('SCREENSHOT:' + {_literal(shot)});",
+            "  } catch (e) {",
+            "    console.log('ACTION_ERROR: ' + (e && e.message ? e.message : e));",
+            "  }",
+        ]
     lines += [
         "  await page.waitForTimeout(400).catch(() => {});",
         "  const snapText = await page.snapshot({ includeStableLocator: true });",
@@ -322,8 +439,16 @@ def _script_for(
         "  console.log('" + _SNAPSHOT_BEGIN + "');",
         "  console.log(snapText);",
         "  console.log('" + _SNAPSHOT_END + "');",
-        "  const need = kindFor(snapText || '');",
+        "  const need = CLAIM_ROUND ? null : kindFor(snapText || '');",
         "  if (need) {",
+    ]
+    if capture.get("captcha_image"):
+        lines += _captcha_capture_lines(
+            capture.get("captcha_image", ""),
+            capture.get("captcha_audio", ""),
+            capture.get("screenshot", ""),
+        )
+    lines += [
         "    await task.handOff();",
         "    console.log('NEED_HUMAN:' + need);",
         "  } else if (CLAIM_ROUND) {",
@@ -359,11 +484,19 @@ def browse(
     ``action`` selects what happens this round: ``load`` navigates to ``url``;
     ``click`` clicks ``selector``; ``fill`` types ``query`` into ``selector``;
     ``select`` chooses the ``query`` option inside the ``selector`` dropdown;
+    ``press`` sends the ``query`` key (default Enter) to submit a form;
+    ``screenshot`` saves a full-page screenshot to a timestamped file;
     ``claim`` re-takes a handed-off (master-owned) space after the master says
     they are done, then acts like ``load``; ``release`` finishes the agent-owned
     task space so the browser claim is freed for the next task. The task space
     persists between calls, so later rounds can act on ``url`` loaded earlier
     without re-navigating.
+
+    When the page needs a human, the CAPTCHA image (and audio CAPTCHA, when
+    present) is saved to a file so the master can read it even though the
+    browser is headless; the paths are returned under ``need_human``.
+    Artifacts land in the current working directory unless
+    ``PICO_ARTIFACTS_DIR`` overrides it.
     """
     if url and not _is_safe_url(url):
         logger.warning(f"[bold red]Unsafe URL refused[/bold red]: {url!r}")
@@ -378,7 +511,10 @@ def browse(
         }
 
     timeout_s = timeout or DEFAULT_TIMEOUT
-    script = _script_for(url, action, selector, query, timeout_ms=int(timeout_s * 1000))
+    capture = _capture_paths()
+    script = _script_for(
+        url, action, selector, query, timeout_ms=int(timeout_s * 1000), capture=capture
+    )
     try:
         proc = _run_browser_script(script, timeout=timeout_s)
     except subprocess.TimeoutExpired:
@@ -394,7 +530,12 @@ def browse(
     action_error = extract_action_error(combined)
     session_error = extract_session_error(combined)
     paused_error = extract_session_paused(combined)
+    captcha_image = extract_captcha_image(combined)
+    captcha_audio = extract_captcha_audio(combined)
+    screenshot = extract_screenshot(combined)
     kind = extract_need_human(combined)
+    if not kind and snapshot and action not in ("release", "claim"):
+        kind = _kind_for(snapshot)
     if release_round:
         if extract_released(combined):
             logger.info("[bold green]Browser released[/bold green] (task space closed; claim freed for the next task)")
@@ -409,15 +550,25 @@ def browse(
     if paused_error:
         _raise_ego_lite_window()
         logger.warning("[bold yellow]Browser session paused[/bold yellow] (master owns the tab)")
+        # Extract the task space id from the SESSION_PAUSED notice so the agent
+        # can heal itself by calling action='claim' with the right space.
+        space_id = None
+        next_step = "call ask_master to confirm the master is done with the tab, then resume with action='claim'"
+        m = re.search(r"task space id[:= ]?(\d+)", paused_error)
+        if m:
+            space_id = int(m.group(1))
         return {
             "ok": False,
             "paused": True,
             "url": url,
             "error": paused_error,
-            "hint": "The tab is parked under the master's control. Ask the master "
-            "through 'ask_master' whether they are done with it; once they say "
-            "to continue, resume with action='claim' (this reclaims the space "
-            "and snapshots the page).",
+            "space_id": space_id,
+            "next_step": next_step,
+            "hint": "The tab is parked under the master's control (task space id: "
+            + str(space_id)
+            + "). Ask the master through 'ask_master' whether they are done with it; "
+            + "once they say to continue, resume with action='claim' (this reclaims the space "
+            + "and snapshots the page).",
         }
     if not snapshot and not title:
         return {
@@ -442,16 +593,41 @@ def browse(
     }
     if extract_claimed(combined):
         result["claimed"] = True
+    if screenshot:
+        result["screenshot"] = screenshot
     if kind:
         _raise_ego_lite_window()
-        result["need_human"] = {
+        hint = (
+            "Stop guessing and ask the master through 'ask_master'. The ego-lite "
+            "browser window is open on this page and handed to the master: ask them "
+            "to type the CAPTCHA into the field and submit the form (click the "
+            "search/submit button) in the open browser window themselves."
+        )
+        if captcha_image:
+            hint += (
+                " If the browser is headless, the CAPTCHA image was saved to "
+                f"{captcha_image!r} — give the master that path so they can open it "
+                "(and play the audio file when present) to read the code."
+            )
+        hint += (
+            " When the master confirms they submitted the form, resume with "
+            "action='claim' (no url) to read the result page — do NOT fill the "
+            "CAPTCHA answer yourself."
+        )
+        need_human: Dict[str, object] = {
             "kind": kind,
             "message": _HUMAN_MESSAGES.get(kind, "The page needs a human."),
-            "hint": "Stop guessing. Ask the master through 'ask_master'. The "
-            "ego-lite browser window is open on this page and under their "
-            "control until pico resumes it.",
+            "hint": hint,
         }
-        logger.warning(f"[bold yellow]Browser needs the master[/bold yellow]: {kind}")
+        if captcha_image:
+            need_human["captcha_image"] = captcha_image
+        if captcha_audio:
+            need_human["captcha_audio"] = captcha_audio
+        result["need_human"] = need_human
+        logger.warning(
+            f"[bold yellow]Browser needs the master[/bold yellow]: {kind}"
+            + (f" (saved {captcha_image})" if captcha_image else "")
+        )
     else:
         if url:
             _raise_ego_lite_window()
@@ -537,6 +713,30 @@ def extract_need_human(stdout: str) -> Optional[str]:
     for line in stdout.splitlines():
         if line.startswith("NEED_HUMAN:"):
             return line[len("NEED_HUMAN:"):].strip()
+    return None
+
+
+def extract_captcha_image(stdout: str) -> Optional[str]:
+    """Return the path of a saved CAPTCHA image (or fallback screenshot), if any."""
+    for line in stdout.splitlines():
+        if line.startswith("CAPTCHA_IMAGE:"):
+            return line[len("CAPTCHA_IMAGE:"):].strip()
+    return None
+
+
+def extract_captcha_audio(stdout: str) -> Optional[str]:
+    """Return the path of a saved audio CAPTCHA, if the page exposed one."""
+    for line in stdout.splitlines():
+        if line.startswith("CAPTCHA_AUDIO:"):
+            return line[len("CAPTCHA_AUDIO:"):].strip()
+    return None
+
+
+def extract_screenshot(stdout: str) -> Optional[str]:
+    """Return the path of a saved full-page screenshot."""
+    for line in stdout.splitlines():
+        if line.startswith("SCREENSHOT:"):
+            return line[len("SCREENSHOT:"):].strip()
     return None
 
 
