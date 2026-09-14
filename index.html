@@ -482,10 +482,12 @@
     <span class="links">
       <a href="#tui-demo">tui demo</a>
       <a href="#features">features</a>
+      <a href="#integrations">integrations</a>
       <a href="#quickstart">quick start</a>
       <a href="#architecture">architecture</a>
       <a href="#tools">tools</a>
       <a href="#cli">cli</a>
+      <a href="#memory">memory</a>
     </span>
   </div>
 </nav>
@@ -585,17 +587,120 @@
 <section id="features">
   <div class="wrap reveal">
     <h2>Features</h2>
-    <ul class="features">
-      <li><b>Multi-agent delegation</b> — <code>pico</code> plans each task and delegates to worker sub-agents: <code>executor</code> (safe file/shell work) and <code>researcher</code> (web/browser research).</li>
-      <li><b>Supervision by design</b> — only higher-risk calls (file writes, browsing, non-trivial shell) pause for approval; read-only tools run automatically and are logged.</li>
-      <li><b>Sandboxed shell</b> — commands run in an isolated sandbox: scrubbed env, enforced CPU/memory/process limits, a timeout, and a command allowlist. <b>pico never deletes files.</b></li>
-      <li><b>Growing memory</b> — working (session), episodic (events), and long-term (facts &amp; preferences) memory, plus semantic memory with local vector search — no network needed.</li>
-      <li><b>Gmail, Calendar &amp; Sheets</b> — read, search, send, and respond via OAuth2 under your explicit approval. Reads run automatically; writes pause for the master.</li>
-      <li><b>Skills</b> — declarative YAML skills teach pico domain workflows: browser use, gym routines, and expense planning.</li>
-      <li><b>Auto-compaction</b> — long tool-loop conversations fold into a one-call summary past <code>PICO_COMPACTION_TOKENS</code>, so context never blows up mid-task.</li>
-      <li><b>Multiple backends</b> — OpenAI-compatible clients for OpenAI, NVIDIA NIM, Cerebras, Groq, and OpenRouter, selected via <code>PROVIDER</code>.</li>
-      <li><b>Two UIs</b> — a full-screen live dashboard (task plan, tokens, activity, memory, log tail) or a modern Textual interface with history, memory browser, and settings screens.</li>
-    </ul>
+    <div class="grid-features">
+      <div class="fcard reveal d1">
+        <span class="ico">multi-agent</span>
+        <h4>Multi-agent delegation</h4>
+        <p><code>pico</code> plans each task and delegates to workers — <code>executor</code> for file/shell work, <code>researcher</code> for web/research.</p>
+      </div>
+      <div class="fcard reveal d2">
+        <span class="ico">supervision</span>
+        <h4>Supervision by design</h4>
+        <p>Higher-risk calls (file writes, browsing, non-trivial shell) pause for approval; read-only tools run automatically and are logged.</p>
+      </div>
+      <div class="fcard reveal d3">
+        <span class="ico">sandbox</span>
+        <h4>Sandboxed shell</h4>
+        <p>Isolated sandbox: scrubbed env, CPU/memory/process limits, timeout, and a command allowlist. <code>pico</code> never deletes files.</p>
+      </div>
+      <div class="fcard reveal d4">
+        <span class="ico">memory</span>
+        <h4>Growing memory</h4>
+        <p>Working (session), episodic (events), and long-term (facts &amp; preferences) memory, plus local semantic vector search — no network needed.</p>
+      </div>
+      <div class="fcard reveal d1">
+        <span class="ico">oauth2</span>
+        <h4>Gmail · Calendar · Sheets</h4>
+        <p>Read, search, and respond via OAuth2 under explicit approval. Reads run automatically; writes pause for the master.</p>
+      </div>
+      <div class="fcard reveal d2">
+        <span class="ico">skills</span>
+        <h4>Skills</h4>
+        <p>Declarative YAML skills teach workflows — browser use, gym routines, expense planning — and grow over time.</p>
+      </div>
+      <div class="fcard reveal d3">
+        <span class="ico">compact</span>
+        <h4>Auto-compaction</h4>
+        <p>Long tool-loop conversations fold into a one-call summary past <code>PICO_COMPACTION_TOKENS</code>, so context never blows up.</p>
+      </div>
+      <div class="fcard reveal d4">
+        <span class="ico">backends</span>
+        <h4>Multiple backends</h4>
+        <p>OpenAI-compatible clients for OpenAI, NVIDIA NIM, Cerebras, Groq, and OpenRouter, selected via <code>PROVIDER</code>.</p>
+      </div>
+      <div class="fcard reveal d1">
+        <span class="ico">uises</span>
+        <h4>Two UIs</h4>
+        <p>A full-screen live dashboard (plan, tokens, activity, memory, log) or a modern Textual interface with history, memory, and settings.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="integrations">
+  <div class="wrap reveal">
+    <h2>Integrations</h2>
+    <p class="lead">What <code>pico</code> can reach — and how far each connection goes under the master's supervision.</p>
+    <div class="igrid">
+      <div class="icard reveal d1">
+        <div class="top"><span class="glyph">G</span><h4>Gmail</h4></div>
+        <p class="sub">Read · search · send · draft · label · thread. OAuth2, scoped to read-only on first connect.</p>
+        <div class="badge-row">
+          <span class="chip ok">read auto</span>
+          <span class="chip ask">writes ask</span>
+          <span class="chip oauth">oauth2</span>
+        </div>
+      </div>
+      <div class="icard reveal d2">
+        <div class="top"><span class="glyph">◉</span><h4>Calendar</h4></div>
+        <p class="sub">List calendars, inspect scheduled events, and check your free/busy — supervised writes for creating or moving meetings.</p>
+        <div class="badge-row">
+          <span class="chip ok">read auto</span>
+          <span class="chip ask">writes ask</span>
+          <span class="chip oauth">oauth2</span>
+        </div>
+      </div>
+      <div class="icard reveal d3">
+        <div class="top"><span class="glyph">▦</span><h4>Sheets</h4></div>
+        <p class="sub">Read rows and ranges, append data, and format cells — useful for expense logs, workout tracking, and ledgers.</p>
+        <div class="badge-row">
+          <span class="chip ok">read auto</span>
+          <span class="chip ask">writes ask</span>
+          <span class="chip oauth">oauth2</span>
+        </div>
+      </div>
+      <div class="icard reveal d4">
+        <div class="top"><span class="glyph">⌖</span><h4>Browser / web</h4></div>
+        <p class="sub">PinchTab / ego-lite browsing for research: visit pages, extract content, and verify live information.</p>
+        <div class="badge-row">
+          <span class="chip ask">browsing ask</span>
+          <span class="chip local">local server</span>
+        </div>
+      </div>
+      <div class="icard reveal d1">
+        <div class="top"><span class="glyph">⌂</span><h4>Speaker</h4></div>
+        <p class="sub">Voice output skill planned — pico will read answers aloud once the skill is wired up.</p>
+        <div class="badge-row">
+          <span class="chip ask">future</span>
+        </div>
+      </div>
+      <div class="icard reveal d2">
+        <div class="top"><span class="glyph">⚙</span><h4>Skills &amp; tools</h4></div>
+        <p class="sub">Declarative YAML skills (browser use, gym routine, expense planner) plus file/bash, memory, semantic, and Gmail tool bindings.</p>
+        <div class="badge-row">
+          <span class="chip local">yaml skills</span>
+          <span class="chip ok">file safe</span>
+          <span class="chip ask">bash ask</span>
+        </div>
+      </div>
+    </div>
+    <div class="providers reveal d3">
+      <span class="prov"><b>nvidia</b> — default · qwen-coder</span>
+      <span class="prov"><b>openai</b> — GPT series</span>
+      <span class="prov"><b>cerebras</b> — fast inference</span>
+      <span class="prov"><b>groq</b> — low-latency models</span>
+      <span class="prov"><b>openrouter</b> — model router</span>
+    </div>
   </div>
 </section>
 
