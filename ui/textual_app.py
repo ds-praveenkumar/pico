@@ -51,6 +51,7 @@ from agents.pico import Pico
 from agents.tools import ask as ask_tools
 from agents.approval import auto_approve
 from brain.logging_setup import capture_logs, current_log_level, drained_logs, get_logger, set_log_level
+from ui.fontsize import FONT_SIZES, apply_font_size, font_size_from_env
 from ui.tui_history import HistoryStore
 
 logger = get_logger(__name__)
@@ -65,6 +66,8 @@ OUTPUT_MODES: List[Tuple[str, str]] = [
 ]
 
 LOG_LEVELS: List[Tuple[str, str]] = [("DEBUG", "DEBUG"), ("INFO", "INFO"), ("WARNING", "WARNING"), ("ERROR", "ERROR")]
+
+FONT_SIZE_OPTIONS: List[Tuple[str, str]] = [(f"{size} pt", str(size)) for size in FONT_SIZES]
 
 
 class PicoTUI(App):
@@ -224,6 +227,7 @@ class PicoTUI(App):
         self.enabled = True
         self.output_mode = "normal"
         self.show_tool_output = True
+        self.font_size: Optional[int] = font_size_from_env()
         self._task_running = False
         self._on_main = True
         self._status = "ready — describe a task below"
@@ -245,6 +249,7 @@ class PicoTUI(App):
 
     def on_mount(self) -> None:
         """Build the pico pipeline and begin capturing logs."""
+        apply_font_size(self.font_size)
         self.pico = Pico(llm=self.llm, approve=self._approve_async, memory=self.memory)
         self.pico.on_plan = self.set_plan
         self.pico.on_step = self.mark_step
@@ -825,19 +830,35 @@ class SettingsScreen(BaseScreen):
 
     def compose(self) -> ComposeResult:
         yield Static("Settings — session-only, reset on exit", classes="screen-title", markup=True)
-        yield Label("Log level")
-        yield Select(LOG_LEVELS, value=current_log_level(), id="log-level", allow_blank=False)
-        yield Label("Output mode (home stream)")
-        yield Select(OUTPUT_MODES, value=self.tui.output_mode, id="output-mode", allow_blank=False)
-        yield Label("Show LLM/tool stream in the output pane")
-        yield Switch(value=self.tui.show_tool_output, id="stream-toggle")
-        yield Label("Record task history (redacted, JSONL on disk)")
-        yield Switch(value=self.tui.history.enabled, id="history-toggle")
-        yield Static(
-            "History is opt-in: when off, nothing is written. Approvals are always confirmed on screen.",
-            classes="hint",
-            markup=True,
-        )
+        with VerticalScroll():
+            yield Label("Log level")
+            yield Select(LOG_LEVELS, value=current_log_level(), id="log-level", allow_blank=False)
+            yield Label("Output mode (home stream)")
+            yield Select(OUTPUT_MODES, value=self.tui.output_mode, id="output-mode", allow_blank=False)
+            yield Label("Terminal font size")
+            yield Select(
+                FONT_SIZE_OPTIONS,
+                value=str(self.tui.font_size) if self.tui.font_size in FONT_SIZES else Select.NULL,
+                prompt="terminal default",
+                id="font-size",
+                allow_blank=True,
+            )
+            yield Static(
+                "Font size is applied with the terminal's font-size sequence (OSC 7770): honoured "
+                "by mintty, Ghostty, kitty and Warp, ignored elsewhere — set the size in the "
+                "terminal's own preferences there.",
+                classes="hint",
+                markup=True,
+            )
+            yield Label("Show LLM/tool stream in the output pane")
+            yield Switch(value=self.tui.show_tool_output, id="stream-toggle")
+            yield Label("Record task history (redacted, JSONL on disk)")
+            yield Switch(value=self.tui.history.enabled, id="history-toggle")
+            yield Static(
+                "History is opt-in: when off, nothing is written. Approvals are always confirmed on screen.",
+                classes="hint",
+                markup=True,
+            )
         yield Horizontal(Button("Back", id="back-btn", variant="default"), classes="back-row")
 
     @on(Select.Changed, "#log-level")
@@ -848,6 +869,15 @@ class SettingsScreen(BaseScreen):
     @on(Select.Changed, "#output-mode")
     def _change_output_mode(self, event: Select.Changed) -> None:
         self.tui.output_mode = str(event.value)
+
+    @on(Select.Changed, "#font-size")
+    def _change_font_size(self, event: Select.Changed) -> None:
+        if event.value == Select.NULL:
+            return
+        size = int(str(event.value))
+        self.tui.font_size = size
+        apply_font_size(size)
+        self.tui.notify(f"Terminal font size -> {size} pt", title="settings")
 
     @on(Switch.Changed, "#stream-toggle")
     def _change_stream(self, event: Switch.Changed) -> None:

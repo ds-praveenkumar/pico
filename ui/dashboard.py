@@ -24,6 +24,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from ui.fontsize import apply_font_size
+
 _PENDING = "[cyan]●[/cyan] pending"
 _RUNNING = "[yellow]▶[/yellow] running"
 _DONE = "[green]✓[/green] done"
@@ -74,6 +76,7 @@ class Dashboard:
         """Enter the alternate screen and begin live rendering."""
         if not self.enabled or self._live is not None:
             return
+        apply_font_size()
         self._live = Live(
             self._render(), console=self.console, refresh_per_second=6, screen=True
         )
