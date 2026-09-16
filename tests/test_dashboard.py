@@ -75,6 +75,17 @@ def test_dashboard_disabled_does_not_start_live():
     assert dash._live is None
 
 
+def test_dashboard_applies_terminal_font_size(monkeypatch):
+    applied: list = []
+    monkeypatch.setattr("ui.dashboard.apply_font_size", lambda size=None: applied.append(size) or True)
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash.start()
+    try:
+        assert applied == [None]
+    finally:
+        dash.stop()
+
+
 def test_dashboard_shows_memory_counts(tmp_path):
     memory = Memory(dir_path=tmp_path)
     memory.remember("pref", "x")

@@ -13,7 +13,7 @@ import pytest
 
 pytest.importorskip("textual")
 
-from textual.widgets import Input, ListView, Switch  # noqa: E402
+from textual.widgets import Input, ListView, Select, Switch  # noqa: E402
 
 from brain.memory import Memory  # noqa: E402
 from conftest import FakeLLM  # noqa: E402
@@ -135,6 +135,24 @@ async def test_settings_toggle_history_and_log_level(tmp_path):
         switch.value = False
         await pilot.pause()
         assert app.history.enabled is False
+
+
+async def test_settings_applies_terminal_font_size(tmp_path, monkeypatch):
+    """Picking a size in Settings stores it and emits the terminal sequence."""
+    monkeypatch.delenv("PICO_FONT_SIZE", raising=False)
+    applied: list = []
+    monkeypatch.setattr("ui.textual_app.apply_font_size", lambda size=None: applied.append(size) or True)
+    app = _build_tui(tmp_path)
+    async with app.run_test() as pilot:
+        assert applied == [None]
+        app.action_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#font-size", Select).value = "20"
+        await pilot.pause()
+        assert app.font_size == 20
+        assert applied[-1] == 20
 
 
 async def test_approval_modal_dismiss(tmp_path):

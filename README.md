@@ -181,6 +181,7 @@ OPENROUTER_MODEL_ID / OPENROUTER_API_KEY / OPENROUTER_BASE_URL  # openrouter
 LOG_LEVEL=INFO                  # optional
 PICO_MEMORY_PATH=~/.pico        # optional memory directory
 PICO_COMPACTION_TOKENS=24000    # optional auto-compaction threshold
+PICO_FONT_SIZE=18               # optional TUI font size in points (OSC 7770 terminals)
 GMAIL_CLIENT_SECRET_PATH=file:///path/to/client_secret_*.json  # OAuth app
 GMAIL_CREDENTIALS_PATH=~/.agents/gmail                         # token dir (optional)
 GMAIL_IMAP_USER=you@gmail.com   # optional legacy IMAP address (superseded by OAuth)
@@ -376,8 +377,8 @@ supervision, same `-y` single-shot behavior — with dedicated screens:
 - **History** (`h`) — recently completed tasks, redacted and recorded to JSONL.
 - **Memory** (`m`) — read-only browser over working, episodic, long-term, and
   semantic memory.
-- **Settings** (`s`) — session-only log level, output mode, stream visibility,
-  and history capture toggle.
+- **Settings** (`s`) — session-only log level, output mode, terminal font size,
+  stream visibility, and history capture toggle.
 - **Help** (`?`) — key bindings and feature reference.
 - **Ctrl+k** command palette, **Ctrl+n** multi-line compose, **Ctrl+e** export
   redacted history, **Ctrl+c** cancels the running task cooperatively.
@@ -392,6 +393,13 @@ written (as redacted JSONL in `~/.pico/tui_history.jsonl`, or under
 `PICO_MEMORY_PATH`) after you enable it in Settings. Email, browsing, voice,
 calendar, and sheet payloads are always scrubbed from the record, and API
 keys/tokens/passwords/email addresses are redacted before anything touches disk.
+
+The TUI can resize the terminal font too. Pick a size under **Settings → Terminal
+font size**, or set `PICO_FONT_SIZE` to a point size. pico emits the mintty
+`OSC 7770` sequence, which mintty, Ghostty, kitty, and Warp honour; terminals
+without it (VS Code's integrated terminal among them) ignore the sequence
+harmlessly, so set the size in the terminal's own preferences there — for VS Code
+that is `"terminal.integrated.fontSize"`.
 
 ```bash
 python app.py --tui                    # interactive Textual session
