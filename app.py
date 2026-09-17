@@ -47,6 +47,26 @@ _DONE = "[green]✓[/green] done"
 _FAILED = "[red]✗[/red] failed"
 
 
+def resolve_model(provider: str) -> str:
+    """Return the model ID configured for the active provider.
+
+    Mirrors :func:`build_client` so the dashboard header and the provider log
+    line always report the model that is actually used, never a stale value
+    from another provider's environment block.
+    """
+    if provider == "openai":
+        return os.getenv("MODEL_ID") or ""
+    if provider == "cerebras":
+        return os.getenv("CEREBRAS_MODEL_ID") or ""
+    if provider == "groq":
+        return os.getenv("GROQ_MODEL_ID") or os.getenv("GROK_MODEL_ID") or ""
+    if provider == "nvidia":
+        return os.getenv("NVIDIA_MODEL_ID") or ""
+    if provider == "openrouter":
+        return os.getenv("OPENROUTER_MODEL_ID") or ""
+    return ""
+
+
 def build_client() -> BaseLLM:
     """Build the LLM client for the provider named in the environment."""
     provider = (os.getenv("PROVIDER") or "nvidia").strip().lower()
@@ -324,7 +344,16 @@ def run_tui_repl(
                 dashboard.set_status("cleared")
                 continue
             dashboard.set_status("working on your task…")
-            run_task(pico, llm, task, plan, stats, dashboard, persistent=True)
+            ok = False
+            try:
+                ok = run_task(pico, llm, task, plan, stats, dashboard, persistent=True)
+            except Exception as exc:  # noqa: BLE001 - a crash must never end the REPL
+                logger.error(f"[bold red]Task crashed[/bold red]: {exc}")
+                dashboard.show_reply(f"*Task crashed:* {exc}", "task failed")
+            if not ok:
+                logger.warning(
+                    f"[bold yellow]Task did not complete[/bold yellow]: {task[:60]} — staying available"
+                )
             dashboard.set_status("ready for your next task — type below")
     finally:
         pump_stop.set()
@@ -368,15 +397,7 @@ def main() -> None:
     ):
         raise RuntimeError("no provider API key found in environment (.env)")
     provider = (os.getenv("PROVIDER") or "nvidia").strip().lower()
-    model = (
-        os.getenv("NVIDIA_MODEL_ID")
-        or os.getenv("MODEL_ID")
-        or os.getenv("CEREBRAS_MODEL_ID")
-        or os.getenv("GROQ_MODEL_ID")
-        or os.getenv("GROK_MODEL_ID")
-        or os.getenv("OPENROUTER_MODEL_ID")
-        or ""
-    )
+    model = resolve_model(provider)
     logger.info(
         "[bold green]Provider ready[/bold green]: %s (model=%s)", provider, model
     )
@@ -413,6 +434,7 @@ def main() -> None:
         os.environ["PICO_AUTO_APPROVE"] = "1"
     pico = Pico(llm=llm, approve=(None if args.yes else smart_approve(dashboard)), memory=memory)
     ask_tools.set_master_prompt(dashboard.ask_text)
+    ask_tools.set_master_notice(dashboard.set_status)
     wire_handlers(pico, llm, dashboard, plan, stats)
 
     if args.task:

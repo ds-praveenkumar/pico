@@ -45,8 +45,10 @@ visit and search important websites on behalf of the master, {master}.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | result | string | Plain-text page summary or extracted data folded into the task report. |
-| need_human | object | Present when the page needs the master: `kind` is `captcha`, `login`, or `form_input`. The browser window is open on that page and handed to the master — ask via `ask_master` to have them type the CAPTCHA (and any required fields) and click the search/submit button in the open browser themselves, then confirm; resume with `action='claim'` to read the result page. |
-| paused | bool | Present (`true`) when the tab is parked under the master's control from an earlier hand-off. Do not claim it on your own — ask via `ask_master` whether the master is done with it, then resume with `action='claim'`. |
+| need_human | object | Present when the page needs the master: `kind` is `captcha`, `otp`, `login`, or `form_input`. The browser window is open on that page and handed to the master — the tool announces what he must do and WAITS for him to hand control back; when he does, pico submits the form itself (CAPTCHA, OTP, and required-form pages; login pages stay read-only) and the result comes back with `resumed`/`submitted` and the result page snapshot. |
+| paused | bool | Present (`true`) when the tab is parked under the master's control (the hand-off wait timed out or an earlier hand-off is open). Do not claim it on your own — ask via `ask_master` whether the master is done with it, then resume with `action='claim'`. |
+| resumed | bool | Present and `true` when pico reclaimed the space after the master handed control back and read the result page. |
+| submitted | object | What pico pressed after resuming: `how` is `click`, `enter`, or `skipped`; `selector` and `reason` give details (e.g. `login page: read only`, `auto-submit disabled`). |
 | released | bool | Present on an `action='release'` call: `true` when the pico-owned task space was closed and the browser claim freed for the next task. |
 
 ## Steps to follow
@@ -62,11 +64,13 @@ visit and search important websites on behalf of the master, {master}.
    `page.evaluate()` to bulk-extract text on data-heavy pages.
 6. **Wait for the result** — use `waitForSelector`/`waitForURL` instead of fixed
    sleeps; stop as soon as the page clearly shows the result.
-7. **Humans only**: when a CAPTCHA, login/OTP, or required form appears, call
-   `ask_master` and let the master DO IT in the open browser window — he types
-   the CAPTCHA (and any required fields) and clicks the search/submit button
-   himself; never guess and never fill a CAPTCHA answer yourself. Once he
-   confirms, resume with `action='claim'` and read the result page.
+7. **Humans only**: when a CAPTCHA, OTP, login, or required form appears, the
+   tool hands the tab to the master, tells him what to do, and WAITS for him to
+   hand control back — then pico submits the form itself (CAPTCHA/OTP/required
+   fields) and reads the result page; never guess and never fill a CAPTCHA or
+   OTP yourself. If the result is
+   `paused` (the wait timed out), call `ask_master` and resume with
+   `action='claim'` once he confirms he is done.
 8. **Report** — return only a plain-text summary to pico, never raw DOM dumps.
 9. **Clean up / release the claim** — once the goal is complete, call
    `ego_lite_browse_use` with `action='release'` exactly once (no `url` needed)

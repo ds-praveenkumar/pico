@@ -69,6 +69,7 @@ class Dashboard:
         self._input_prompt = ""
         self._input_buffer = ""
         self._input_active = False
+        self._reading_input = False
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -93,7 +94,18 @@ class Dashboard:
             self._live = None
 
     def refresh(self) -> None:
-        """Redraw the dashboard with the current state."""
+        """Redraw the dashboard with the current state.
+
+        While a line of input is being read the live screen is frozen so the
+        keystroke echo (the only writer) never races the animation or log
+        pumps and frames cannot overlap.
+        """
+        with self._lock:
+            if self._live is not None and not self._reading_input:
+                self._live.update(self._render())
+
+    def _repaint(self) -> None:
+        """Force a redraw even while reading input (used to echo keystrokes)."""
         with self._lock:
             if self._live is not None:
                 self._live.update(self._render())
@@ -181,22 +193,28 @@ class Dashboard:
         """Read one line of input, rendered inside the live TUI.
 
         On a real terminal this switches stdin to character mode (no echo) so
-        keystrokes update the input line in the footer; on non-tty stdin it
-        falls back to plain :func:`input`.
+        keystrokes update the input line in the footer. The raw-terminal path
+        is wrapped so that any failure on a later call (terminal left in a bad
+        state after a task, a closed stdin, ...) degrades to plain :func:`input`
+        instead of wedging the REPL; the input banner is always cleared
+        afterwards.
         """
         self._input_prompt = prompt
         self._input_buffer = ""
         self._input_active = True
-        self.refresh()
-
-        if not sys.stdin.isatty() or not hasattr(termios, "tcgetattr"):
-            try:
-                line = input(prompt)
-            except EOFError:
-                line = ""
+        self._reading_input = True
+        self._repaint()
+        try:
+            if not sys.stdin.isatty() or not hasattr(termios, "tcgetattr"):
+                raise OSError("stdin is not a usable tty")
+            return self._read_line_raw(prompt)
+        except (termios.error, OSError, ValueError):
+            return self._read_line_plain(prompt)
+        finally:
             self._finish_input()
-            return line
 
+    def _read_line_raw(self, prompt: str) -> str:
+        """Read one line character-by-character in cbreak mode (no terminal echo)."""
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         chars: List[str] = []
@@ -215,17 +233,23 @@ class Dashboard:
                     if chars:
                         chars.pop()
                         self._input_buffer = "".join(chars)
-                        self.refresh()
+                        self._repaint()
                     continue
                 char = decoder.decode(chunk)
                 if char:
                     chars.append(char)
                     self._input_buffer = "".join(chars)
-                    self.refresh()
+                    self._repaint()
         finally:
             termios.tcsetattr(fd, termios.TCSANOW, old)
-            self._finish_input()
         return "".join(chars)
+
+    def _read_line_plain(self, prompt: str) -> str:
+        """Fallback reader for non-tty stdin or a failing raw-terminal path."""
+        try:
+            return input(prompt)
+        except EOFError:
+            return ""
 
     def ask_yes_no(self, question: str) -> bool:
         """Ask a yes/no question inside the TUI and return the decision."""
@@ -250,6 +274,7 @@ class Dashboard:
 
     def _finish_input(self) -> None:
         with self._lock:
+            self._reading_input = False
             self._input_active = False
             self._input_prompt = ""
             self._input_buffer = ""

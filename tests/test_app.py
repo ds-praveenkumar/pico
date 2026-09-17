@@ -1,11 +1,12 @@
 """Tests for the CLI's risk-aware approval policy."""
 
 import io
+from typing import List
 
 import pytest
 from rich.console import Console
 
-from app import _auto_approve, _bash_needs_approval, PlanView, SessionStats, build_client, run_task
+from app import _auto_approve, _bash_needs_approval, PlanView, SessionStats, build_client, resolve_model, run_task
 from brain.memory import Memory
 from ui import Dashboard
 
@@ -99,6 +100,58 @@ def test_run_task_persistent_routes_reply_into_dashboard(tmp_path, capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_tui_repl_continues_after_completed_task(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from app import run_tui_repl
+
+    class SequentialPico:
+        def __init__(self) -> None:
+            self.tasks: List[str] = []
+
+        def run(self, task: str) -> str:
+            self.tasks.append(task)
+            return f"REPLY:{task}"
+
+    llm = SimpleNamespace(usage={"prompt": 0, "completion": 0, "total": 0})
+    dash = Dashboard(console=_console(), provider="fake", model="m", memory=Memory(dir_path=tmp_path))
+    dash.enabled = False
+    lines = iter(["first task", "second task", "exit"])
+    monkeypatch.setattr(dash, "read_line", lambda prompt="": next(lines))
+
+    pico = SequentialPico()
+    run_tui_repl(pico, llm=llm, plan=PlanView(), stats=SessionStats(), dashboard=dash)
+
+    assert pico.tasks == ["first task", "second task"]
+    assert dash._reply == "REPLY:second task"
+
+
+def test_tui_repl_survives_task_crash_and_runs_next(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from app import run_tui_repl
+
+    calls = []
+
+    class CrashThenRun:
+        def run(self, task: str) -> str:
+            calls.append(task)
+            if task == "boom":
+                raise RuntimeError("executor died")
+            return f"REPLY:{task}"
+
+    llm = SimpleNamespace(usage={"prompt": 0, "completion": 0, "total": 0})
+    dash = Dashboard(console=_console(), provider="fake", model="m", memory=Memory(dir_path=tmp_path))
+    dash.enabled = False
+    lines = iter(["boom", "second task", "exit"])
+    monkeypatch.setattr(dash, "read_line", lambda prompt="": next(lines))
+
+    run_tui_repl(CrashThenRun(), llm=llm, plan=PlanView(), stats=SessionStats(), dashboard=dash)
+
+    assert calls == ["boom", "second task"]
+    assert dash._reply == "REPLY:second task"
+
+
 def test_wired_live_output_streams_tool_results_never_bare_none(tmp_path, fake_llm):
     from conftest import FakeLLM
     from agents.pico import Pico
@@ -162,6 +215,23 @@ def test_build_client_groq_missing_key_raises(monkeypatch):
         build_client()
 
 
+def test_resolve_model_follows_active_provider(monkeypatch):
+    monkeypatch.setenv("NVIDIA_MODEL_ID", "nvidia/nemotron-3.5-lightning-30b-a3b")
+    monkeypatch.setenv("GROQ_MODEL_ID", "openai/gpt-oss-120b")
+    monkeypatch.setenv("GROK_MODEL_ID", "openai/gpt-oss-120b")
+    monkeypatch.setenv("CEREBRAS_MODEL_ID", "cerebras-model")
+    monkeypatch.setenv("OPENROUTER_MODEL_ID", "openrouter-model")
+    monkeypatch.setenv("MODEL_ID", "openai-model")
+    assert resolve_model("groq") == "openai/gpt-oss-120b"
+    assert resolve_model("groq").startswith("openai/") is True
+    assert "nemotron" not in resolve_model("groq")
+    assert resolve_model("nvidia") == "nvidia/nemotron-3.5-lightning-30b-a3b"
+    assert resolve_model("cerebras") == "cerebras-model"
+    assert resolve_model("openrouter") == "openrouter-model"
+    assert resolve_model("openai") == "openai-model"
+    assert resolve_model("mystery") == ""
+
+
 def test_build_client_openrouter(monkeypatch):
     monkeypatch.setenv("PROVIDER", "openrouter")
     monkeypatch.setenv("OPENROUTER_MODEL_ID", "anthropic/claude-sonnet-4")
@@ -179,3 +249,16 @@ def test_build_client_openrouter_missing_key_raises(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
         build_client()
+
+
+def test_master_notice_drives_dashboard_status(tmp_path):
+    from agents.tools import ask as ask_tools
+
+    dash = Dashboard(console=_console(), provider="fake", model="m", memory=Memory(dir_path=tmp_path))
+    ask_tools.set_master_notice(dash.set_status)
+    try:
+        assert ask_tools.notify_master("solve the CAPTCHA in the open browser") is True
+        assert "solve the CAPTCHA" in dash._status
+        assert "solve the CAPTCHA" in _render_console(dash)
+    finally:
+        ask_tools.set_master_notice(None)

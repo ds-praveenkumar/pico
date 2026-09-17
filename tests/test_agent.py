@@ -2,11 +2,13 @@
 
 from types import SimpleNamespace
 
-from conftest import FakeLLM
+import agents.base_agent as base_agent_module
+from agents.base_agent import HANDOFF_REMINDER_LIMIT
+from conftest import FakeLLM, fake_message
 from brain.memory import Memory
 
 from agents.executor import Executor
-from agents.pico import Pico, parse_plan
+from agents.pico import Pico, _PLAN_INSTRUCTION, parse_plan
 from agents.researcher import Researcher
 from agents.tools import memory as memory_tools
 from agents.tools import dispatch
@@ -14,6 +16,34 @@ from agents.tools import dispatch
 
 def _reject_all(name, args):
     return False
+
+
+class _ScriptedLLM(FakeLLM):
+    """FakeLLM that replays a fixed list of chat replies in order."""
+
+    def __init__(self, replies):
+        super().__init__()
+        self._replies = list(replies)
+
+    def generate(self, messages=None, **kwargs):
+        self.calls.append(messages[-1]["content"])
+        if self._replies:
+            return self._replies.pop(0)
+        return fake_message("no more scripted replies")
+
+
+def _browse_call(args='{"url": "https://example.com"}'):
+    return [
+        SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(name="ego_lite_browse_use", arguments=args),
+        )
+    ]
+
+
+_PAUSED = {"ok": False, "paused": True, "handoff_timeout": True, "awaiting_human": True}
+_CLAIMED = {"ok": True, "claimed": True, "result": "after the master"}
+_RESUMED = {"ok": True, "resumed": True, "control_returned": True, "result": "result page"}
 
 
 def test_parse_plan_with_fences():
@@ -29,6 +59,19 @@ def test_parse_plan_plain_json():
 def test_parse_plan_rejects_noise():
     assert parse_plan("no steps here") == []
     assert parse_plan("") == []
+
+
+def test_plan_instruction_forbids_bare_ask_step():
+    assert "Never plan a bare 'ask the master' step" in _PLAN_INSTRUCTION
+    assert "asks mid-task and keeps going from the answer" in _PLAN_INSTRUCTION
+
+
+def test_executor_prompt_continues_after_master_answer():
+    executor = Executor(name="executor", llm=None)
+    instructions = executor.system_instructions()
+    assert "DIRECTIVE to keep working" in instructions
+    assert "never end by reporting" in instructions
+    assert "ego_lite_browse_use" in instructions
 
 
 def test_executor_runs_tool_loop(fake_llm):
@@ -352,3 +395,67 @@ def test_process_result_truncates_and_serializes():
     weird = {"ok": True, "blob": object()}
     body = executor._process_result(weird)
     assert "not JSON-serializable" in body
+
+
+def test_agent_does_not_end_while_tab_is_parked(monkeypatch):
+    results = [_PAUSED, _CLAIMED]
+    monkeypatch.setattr(base_agent_module, "dispatch", lambda name, **kw: results.pop(0))
+    llm = _ScriptedLLM(
+        [
+            fake_message(None, _browse_call()),
+            fake_message("the results are ready"),
+            fake_message(None, _browse_call('{"action": "claim"}')),
+            fake_message("the results are ready"),
+        ]
+    )
+    executor = Executor(name="executor", llm=llm)
+    out = executor.run("browse example.com")
+    assert out == "the results are ready"
+    assert llm._replies == []
+    reminders = [c for c in llm.calls if "still handed off" in c]
+    assert len(reminders) == 1
+    assert executor._handoff_reminders == 1
+    assert not out.startswith("WARNING")
+
+
+def test_agent_reports_honestly_after_reminder_limit(monkeypatch):
+    monkeypatch.setattr(base_agent_module, "dispatch", lambda name, **kw: dict(_PAUSED))
+    llm = _ScriptedLLM(
+        [
+            fake_message(None, _browse_call()),
+            fake_message("all done"),
+            fake_message("all done"),
+            fake_message("all done"),
+        ]
+    )
+    executor = Executor(name="executor", llm=llm)
+    out = executor.run("browse example.com")
+    assert out.startswith("WARNING")
+    assert "parked" in out
+    assert "all done" in out
+    assert executor._handoff_reminders == HANDOFF_REMINDER_LIMIT
+    reminders = [c for c in llm.calls if "still handed off" in c]
+    assert len(reminders) == HANDOFF_REMINDER_LIMIT
+
+
+def test_agent_clears_handoff_state_on_resume(monkeypatch):
+    monkeypatch.setattr(base_agent_module, "dispatch", lambda name, **kw: dict(_RESUMED))
+    llm = _ScriptedLLM(
+        [
+            fake_message(None, _browse_call()),
+            fake_message("result page read, goal complete"),
+        ]
+    )
+    executor = Executor(name="executor", llm=llm)
+    out = executor.run("browse example.com")
+    assert out == "result page read, goal complete"
+    assert executor._awaiting_human is False
+    assert not [c for c in llm.calls if "still handed off" in c]
+
+
+def test_track_handoff_state_ignores_other_tools():
+    executor = Executor(name="executor", llm=SimpleNamespace(tools=None))
+    executor._track_handoff_state("file_read", {"ok": False, "error": "boom"})
+    assert executor._awaiting_human is False
+    executor._track_handoff_state("ego_lite_browse_use", {"ok": True, "released": True})
+    assert executor._awaiting_human is False

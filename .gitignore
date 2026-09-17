@@ -5,7 +5,8 @@ __pycache__/
 
 # C extensions
 *.so
-
+*.png 
+*.wav
 # Distribution / packaging
 .Python
 build/
@@ -219,3 +220,5 @@ __marimo__/
 AGENTS.md
 .claude/settings.json
 .mcp.json
+implementation_plan.md
+docs/medium-post.md

@@ -9,7 +9,7 @@ from agents.cancellation import CancellationToken, TaskCancelled
 from agents.executor import Executor
 from agents.pico import Pico
 from brain.memory import Memory
-from conftest import FakeLLM
+from conftest import FakeLLM, fake_message
 
 _ZERO_USAGE = {"prompt": 0, "completion": 0, "total": 0}
 
@@ -109,3 +109,73 @@ async def test_async_run_resets_compaction_state(tmp_path):
     llm.all_messages.clear()
     await executor.run_async("Read README.md")
     assert _has_compaction_summary(llm)
+
+
+class _ScriptedLLM(FakeLLM):
+    """FakeLLM that replays a fixed list of chat replies in order."""
+
+    def __init__(self, replies):
+        super().__init__()
+        self._replies = list(replies)
+
+    def generate(self, messages=None, **kwargs):
+        self.calls.append(messages[-1]["content"])
+        if self._replies:
+            return self._replies.pop(0)
+        return fake_message("no more scripted replies")
+
+
+def _browse_call():
+    return [
+        SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(
+                name="ego_lite_browse_use", arguments='{"url": "https://example.com"}'
+            ),
+        )
+    ]
+
+
+async def test_async_loop_mirrors_handoff_guard(monkeypatch):
+    import agents.base_agent as base_agent_module
+    from agents.base_agent import HANDOFF_REMINDER_LIMIT
+
+    monkeypatch.setattr(
+        base_agent_module, "dispatch", lambda name, **kw: {"ok": False, "paused": True}
+    )
+    llm = _ScriptedLLM(
+        [
+            fake_message(None, _browse_call()),
+            fake_message("all done"),
+            fake_message("all done"),
+            fake_message("all done"),
+        ]
+    )
+    executor = Executor(name="executor", llm=llm)
+    out = await executor.run_async("browse example.com")
+    assert out.startswith("WARNING")
+    assert "parked" in out
+    assert "all done" in out
+    assert executor._handoff_reminders == HANDOFF_REMINDER_LIMIT
+    reminders = [c for c in llm.calls if "still handed off" in c]
+    assert len(reminders) == HANDOFF_REMINDER_LIMIT
+
+
+async def test_async_loop_resumes_after_claim(monkeypatch):
+    import agents.base_agent as base_agent_module
+
+    results = [{"ok": False, "paused": True}, {"ok": True, "claimed": True}]
+    monkeypatch.setattr(base_agent_module, "dispatch", lambda name, **kw: results.pop(0))
+    llm = _ScriptedLLM(
+        [
+            fake_message(None, _browse_call()),
+            fake_message("done"),
+            fake_message(None, _browse_call()),
+            fake_message("done for real"),
+        ]
+    )
+    executor = Executor(name="executor", llm=llm)
+    out = await executor.run_async("browse example.com")
+    assert out == "done for real"
+    assert executor._handoff_reminders == 1
+    assert not out.startswith("WARNING")

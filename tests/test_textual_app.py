@@ -194,3 +194,24 @@ async def test_ask_text_returns_empty_directly_on_event_loop(tmp_path):
     app = _build_tui(tmp_path)
     async with app.run_test() as pilot:
         assert app.ask_text("question?") == ""
+
+
+async def test_tui_wires_master_notice_hook(tmp_path, monkeypatch):
+    from agents.tools import ask as ask_tools
+
+    installed: list = []
+    monkeypatch.setattr(ask_tools, "set_master_notice", lambda h: installed.append(h))
+    app = _build_tui(tmp_path)
+    async with app.run_test() as pilot:
+        assert installed and installed[-1] == app.notify_master
+    assert installed[-1] is None
+
+
+async def test_tui_notify_master_updates_status(tmp_path):
+    app = _build_tui(tmp_path)
+    async with app.run_test() as pilot:
+        app.notify_master("solve the CAPTCHA in the open browser")
+        await pilot.pause()
+        assert "solve the CAPTCHA in the open browser" in app._status
+        statusbar = str(app.query_one("#statusbar").render())
+        assert "solve the CAPTCHA" in statusbar
