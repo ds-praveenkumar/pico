@@ -20,13 +20,22 @@ The bridge is safe by construction:
   hand-off (``task.handOff``) hands control to the master mid-goal.
 
 Human-in-the-loop: when the page shows a CAPTCHA, a login/OTP prompt, or a
-required form, the script hands the space off to the master with
-``task.handOff()`` (the ego-lite browser window stays open on that page) and
-reports ``need_human`` instead of guessing. The master types the CAPTCHA (and
-any required fields) and submits the form in the open browser window
-themselves; the next call reclaims the space with
-``takeOverTaskSpace``/``claimTaskSpace`` (``action='claim'``) to read the
-result page, never re-triggering a hand-off on the same page.
+required form, the script saves the CAPTCHA image — and the audio CAPTCHA when
+the page exposes one — to a timestamped file so the master can read or hear it
+even though the browser is headless, then hands the space off with
+``task.handOff()`` and reports ``need_human``. The hand-off is self-resuming:
+the tool announces what the master must do via ``notify_master``, then waits in
+place with ``task.waitForControl`` (up to ``PICO_BROWSER_HANDOFF_TIMEOUT``
+seconds, default 600; disable the wait with ``PICO_BROWSER_AWAIT_HUMAN=0``).
+When control returns, the script reclaims the space, submits the form itself
+(CAPTCHA, OTP, and required-form pages only — login pages stay read-only;
+``PICO_BROWSER_AUTO_SUBMIT=0`` disables this), and snapshots the result page,
+so the result carries ``resumed``/``submitted`` and the master never needs a
+second instruction. If the wait times out the result is ``paused`` (with
+``handoff_timeout``/``awaiting_human``) and the tab stays open under the
+master's control: the agent asks via ``ask_master`` and reclaims the space
+later with ``takeOverTaskSpace``/``claimTaskSpace`` (``action='claim'``),
+never re-triggering a hand-off on the same page.
 
 Actions: ``load`` (default) navigates and snapshots; ``click`` operates on
 ``selector``; ``fill`` types ``query`` into ``selector``; ``select`` selects the
@@ -61,6 +70,8 @@ from urllib.parse import urlparse
 
 from brain.logging_setup import get_logger
 
+from agents.tools.ask import notify_master
+
 logger = get_logger(__name__)
 
 ALLOWED_SCHEMES = {"http", "https"}
@@ -73,8 +84,27 @@ TASK_SPACE_NAME = "pico: research"
 _ACTION_TIMEOUT_MS = 6000
 _ARTIFACTS_ENV = "PICO_ARTIFACTS_DIR"
 
+_AWAIT_HUMAN_ENV = "PICO_BROWSER_AWAIT_HUMAN"
+_HANDOFF_TIMEOUT_ENV = "PICO_BROWSER_HANDOFF_TIMEOUT"
+_AUTO_SUBMIT_ENV = "PICO_BROWSER_AUTO_SUBMIT"
+
+DEFAULT_HANDOFF_TIMEOUT = 600
+_HANDOFF_TIMEOUT_MIN = 30
+_HANDOFF_TIMEOUT_MAX = 7200
+_WAIT_POLL_MS = 1000
+
+_AUTO_SUBMIT_KINDS = ("captcha", "form_input", "otp")
+_SUBMIT_LABEL_RE = "submit|search|verify|continue|confirm|sign in|send|go"
+
+_CONTROL_BACK_MARK = "CONTROL_BACK:"
+_RESUMED_MARK = "RESUMED:"
+_SUBMITTED_MARK = "SUBMITTED:"
+_HANDOFF_TIMEOUT_MARK = "HANDOFF_TIMEOUT:"
+
 _SNAPSHOT_BEGIN = "---SNAPSHOT-BEGIN---"
 _SNAPSHOT_END = "---SNAPSHOT-END---"
+_RESULT_BEGIN = "---RESULT-BEGIN---"
+_RESULT_END = "---RESULT-END---"
 
 # Snapshot keyword hints used (in the Node script and in tests) to decide when
 # the page needs the master instead of another guessed click.
@@ -114,6 +144,23 @@ _FORM_HINTS = (
     "please fill",
     "please enter",
 )
+_OTP_HINTS = (
+    "otp",
+    "one-time password",
+    "one time password",
+    "verification code",
+    "verify code",
+    "enter the code",
+    "enter code",
+    "type the code",
+    "enter the otp",
+    "code has been sent",
+    "code sent to",
+    "6 digit code",
+    "6-digit code",
+    "4 digit code",
+    "4-digit code",
+)
 _INPUT_ROLE_RE = r"(textbox|combobox|password|checkbox|radio button|textfield|input)"
 
 _HUMAN_MESSAGES = {
@@ -124,6 +171,13 @@ _HUMAN_MESSAGES = {
         "search/submit button in the open browser window themselves, then "
         "confirm. After they confirm, resume with action='claim' and read the "
         "result page."
+    ),
+    "otp": (
+        "An OTP / one-time password is being requested — pico must never guess "
+        "it. The ego-lite browser window is open on this page and handed to the "
+        "master: ask them to type the code they received (SMS/email) into the "
+        "field in the open browser window; pico then submits the form itself "
+        "and reads the result page."
     ),
     "login": (
         "Login, OTP, or two-factor prompt detected — pico must never guess "
@@ -140,12 +194,14 @@ _HUMAN_MESSAGES = {
 
 
 def _kind_for(text: str) -> Optional[str]:
-    """Classify a page for CAPTCHA/login/required-form involvement (Python-side fallback)."""
+    """Classify a page for CAPTCHA/OTP/login/required-form involvement (Python-side fallback)."""
     lower = (text or "").lower()
     has_input = re.search(_INPUT_ROLE_RE, lower) is not None
     has_password = "password" in lower
     if any(k in lower for k in _CAPTCHA_HINTS):
         return "captcha"
+    if any(k in lower for k in _OTP_HINTS) and has_input:
+        return "otp"
     if any(k in lower for k in _LOGIN_HINTS) and has_password:
         return "login"
     if any(k in lower for k in _FORM_HINTS) and has_input and ("required" in lower or "mandatory" in lower):
@@ -181,6 +237,38 @@ def artifacts_dir() -> Path:
         logger.debug("could not create artifacts dir %s: %s", directory, exc)
         return Path.cwd()
     return directory
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    """Return a boolean environment flag; ``0``/``false``/``no``/``off`` disable it."""
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _await_human_enabled() -> bool:
+    """Return whether a hand-off waits in place for the master to finish."""
+    return _env_flag(_AWAIT_HUMAN_ENV, True)
+
+
+def _auto_submit_enabled() -> bool:
+    """Return whether pico submits the form once control comes back to it."""
+    return _env_flag(_AUTO_SUBMIT_ENV, True)
+
+
+def handoff_timeout_seconds(override: Optional[int] = None) -> int:
+    """Return how long pico waits for the master, clamped to a sane range."""
+    value = override
+    if value is None:
+        raw = os.getenv(_HANDOFF_TIMEOUT_ENV, "").strip()
+        try:
+            value = int(raw) if raw else None
+        except ValueError:
+            value = None
+    if value is None:
+        value = DEFAULT_HANDOFF_TIMEOUT
+    return max(_HANDOFF_TIMEOUT_MIN, min(int(value), _HANDOFF_TIMEOUT_MAX))
 
 
 def _capture_paths() -> Dict[str, str]:
@@ -230,6 +318,114 @@ def _captcha_capture_lines(image_path: str, audio_path: str, fallback_shot: str)
             f"      if (audioSrc) {{ await page.fetch(audioSrc, {{ saveAs: {_literal(audio_path)} }}); console.log('CAPTCHA_AUDIO:' + {_literal(audio_path)}); }}",
             "    } catch (e) { console.log('CAPTCHA_AUDIO_ERROR: ' + (e && e.message ? e.message : e)); }",
         ]
+    return lines
+
+
+def _handoff_announcement(
+    kind: str,
+    url: str,
+    captcha_image: Optional[str] = None,
+    captcha_audio: Optional[str] = None,
+) -> str:
+    """Return the notice telling the master what to do in the handed-off window."""
+    label = {
+        "captcha": "a CAPTCHA",
+        "otp": "an OTP / one-time password",
+        "login": "a login/OTP prompt",
+        "form_input": "required form fields",
+    }.get(kind, "input only you can give")
+    parts = [f"Browser needs the master: {label} on {url or 'the open page'}."]
+    if captcha_image:
+        parts.append(f"The CAPTCHA image is saved at {captcha_image}.")
+    if captcha_audio:
+        parts.append(f"The audio CAPTCHA is saved at {captcha_audio}.")
+    parts.append(
+        "Solve or fill it in the open ego-lite window and hand control back — "
+        "pico will submit the form and continue by itself."
+    )
+    return " ".join(parts)
+
+
+def _auto_submit_node_lines() -> List[str]:
+    """Return the Node lines that submit the form once control is back."""
+    return [
+        "        let submitted = { how: 'skipped', selector: '', reason: 'not submitted' };",
+        "        if (!AUTO_SUBMIT) {",
+        "          submitted.reason = 'auto-submit disabled';",
+        "        } else if (!SUBMIT_KINDS.includes(need)) {",
+        "          submitted.reason = 'login page: read only';",
+        "        } else {",
+        "          try {",
+        "            const nowUrl = await page.url();",
+        "            const nowTitle = await page.title();",
+        "            if (nowUrl !== beforeUrl || nowTitle !== beforeTitle) {",
+        "              submitted.reason = 'page already advanced';",
+        "            } else {",
+        "              const picked = await page.evaluate((re) => {",
+        "                const rx = new RegExp(re, 'i');",
+        "                const text = (el) => ((el.getAttribute('aria-label') || '') + ' ' + (el.value || '') + ' ' + (el.textContent || '') + ' ' + (el.name || '') + ' ' + (el.id || '')).trim();",
+        "                const nodes = Array.from(document.querySelectorAll('button, input[type=submit], input[type=button], [role=button]'));",
+        "                const hit = nodes.find((el) => !el.disabled && rx.test(text(el)));",
+        "                if (!hit) { return null; }",
+        "                hit.setAttribute('data-pico-submit', '1');",
+        "                return '[data-pico-submit=\"1\"]';",
+        "              }, SUBMIT_RE);",
+        "              if (picked) {",
+        "                await page.click(picked, { label: 'pico submit', timeout: ACTION_MS });",
+        "                submitted = { how: 'click', selector: picked, reason: 'clicked the submit control' };",
+        "              } else {",
+        "                await page.keyboard.press('Enter');",
+        "                submitted = { how: 'enter', selector: '', reason: 'no submit control found; pressed Enter' };",
+        "              }",
+        "            }",
+        "          } catch (e) {",
+        "            submitted = { how: 'skipped', selector: '', reason: 'submit failed: ' + (e && e.message ? e.message : e) };",
+        "          }",
+        "        }",
+        "        console.log('SUBMITTED:' + JSON.stringify(submitted));",
+    ]
+
+
+def _handoff_node_lines(capture: Dict[str, str]) -> List[str]:
+    """Return the Node lines that wait for the master, resume, and snapshot the result."""
+    lines = [
+        "    if (AWAIT_HUMAN) {",
+        "      const beforeUrl = await page.url().catch(() => '');",
+        "      const beforeTitle = await page.title().catch(() => '');",
+        "      let returned = false;",
+        "      try {",
+        "        await task.waitForControl({ interval: WAIT_POLL_MS, timeout: HANDOFF_TIMEOUT_MS });",
+        "        returned = true;",
+        "      } catch (e) { returned = false; }",
+        "      if (returned) {",
+        "        console.log('CONTROL_BACK:true');",
+    ]
+    lines += _auto_submit_node_lines()
+    lines += [
+        "        await page.waitForLoadState('load').catch(() => {});",
+        "        await page.waitForTimeout(400).catch(() => {});",
+    ]
+    if capture.get("screenshot"):
+        shot = capture.get("screenshot", "")
+        lines += [
+            "        try {",
+            f"          await page.screenshot({{ path: {_literal(shot)} }});",
+            f"          console.log('SCREENSHOT:' + {_literal(shot)});",
+            "        } catch (e) { console.log('SCREENSHOT_ERROR: ' + (e && e.message ? e.message : e)); }",
+        ]
+    lines += [
+        "        const resumedText = await page.snapshot({ includeStableLocator: true });",
+        "        console.log('TITLE: ' + (await page.title()));",
+        "        console.log('FINAL_URL: ' + (await page.url()));",
+        "        console.log('" + _RESULT_BEGIN + "');",
+        "        console.log(resumedText);",
+        "        console.log('" + _RESULT_END + "');",
+        "        console.log('RESUMED:true');",
+        "      } else {",
+        "        console.log('HANDOFF_TIMEOUT:' + HANDOFF_TIMEOUT_MS);",
+        "      }",
+        "    }",
+    ]
     return lines
 
 
@@ -287,6 +483,9 @@ def _script_for(
     query: Optional[str],
     timeout_ms: int,
     capture: Optional[Dict[str, str]] = None,
+    await_human: bool = False,
+    handoff_timeout_ms: int = 0,
+    auto_submit: bool = False,
 ) -> str:
     """Build the ego-lite Node script for one navigate/act/release + snapshot round.
 
@@ -314,11 +513,20 @@ def _script_for(
         "  const CAPTCHA_KW = " + json.dumps(list(_CAPTCHA_HINTS)) + ";",
         "  const LOGIN_KW = " + json.dumps(list(_LOGIN_HINTS)) + ";",
         "  const FORM_KW = " + json.dumps(list(_FORM_HINTS)) + ";",
+        "  const OTP_KW = " + json.dumps(list(_OTP_HINTS)) + ";",
+        f"  const AWAIT_HUMAN = {'true' if await_human else 'false'};",
+        f"  const AUTO_SUBMIT = {'true' if auto_submit else 'false'};",
+        f"  const HANDOFF_TIMEOUT_MS = {int(handoff_timeout_ms)};",
+        f"  const WAIT_POLL_MS = {_WAIT_POLL_MS};",
+        f"  const ACTION_MS = {_ACTION_TIMEOUT_MS};",
+        "  const SUBMIT_KINDS = " + json.dumps(list(_AUTO_SUBMIT_KINDS)) + ";",
+        "  const SUBMIT_RE = " + _literal(_SUBMIT_LABEL_RE) + ";",
         "  function kindFor(text) {",
         "    const t = (text || '').toLowerCase();",
         "    const hasInput = /" + _INPUT_ROLE_RE + "/.test(t);",
         "    const hasPasswordInput = /type\\s*=\\s*[\"\x27]?password/i.test(t) || /password/i.test(t);",
         "    if (CAPTCHA_KW.some(k => t.includes(k))) return 'captcha';",
+        "    if (OTP_KW.some(k => t.includes(k)) && hasInput) return 'otp';",
         "    if (LOGIN_KW.some(k => t.includes(k)) && hasPasswordInput) return 'login';",
         "    if (FORM_KW.some(k => t.includes(k)) && hasInput && (/required/i.test(t) || /mandatory/i.test(t))) return 'form_input';",
         "    return null;",
@@ -451,6 +659,10 @@ def _script_for(
     lines += [
         "    await task.handOff();",
         "    console.log('NEED_HUMAN:' + need);",
+    ]
+    if await_human:
+        lines += _handoff_node_lines(capture)
+    lines += [
         "  } else if (CLAIM_ROUND) {",
         "    console.log('CLAIMED:true');",
         "  }",
@@ -478,6 +690,8 @@ def browse(
     query: Optional[str] = None,
     timeout: Optional[int] = None,
     max_chars: int = DEFAULT_MAX_CHARS,
+    await_human: bool = True,
+    handoff_timeout: Optional[int] = None,
 ) -> Dict[str, object]:
     """Act in the ego-lite browser and return the page snapshot as text.
 
@@ -497,6 +711,16 @@ def browse(
     browser is headless; the paths are returned under ``need_human``.
     Artifacts land in the current working directory unless
     ``PICO_ARTIFACTS_DIR`` overrides it.
+
+    The hand-off is self-resuming by default (``await_human``, gated by
+    ``PICO_BROWSER_AWAIT_HUMAN``): the tool announces what the master must do
+    (``notify_master``), waits in place with ``task.waitForControl`` for up to
+    ``handoff_timeout`` seconds (default ``PICO_BROWSER_HANDOFF_TIMEOUT`` /
+    600), then reclaims the space, submits the form itself (CAPTCHA and
+    required-form pages only — login/OTP pages stay read-only), and snapshots
+    the result page, reporting ``resumed``/``submitted``. When the master does
+    not return control in time the result is ``paused``/``handoff_timeout`` and
+    the agent must recover with ``ask_master`` + ``action='claim'``.
     """
     if url and not _is_safe_url(url):
         logger.warning(f"[bold red]Unsafe URL refused[/bold red]: {url!r}")
@@ -512,11 +736,23 @@ def browse(
 
     timeout_s = timeout or DEFAULT_TIMEOUT
     capture = _capture_paths()
+    wait_seconds = handoff_timeout_seconds(handoff_timeout)
+    awaiting = await_human and _await_human_enabled()
     script = _script_for(
-        url, action, selector, query, timeout_ms=int(timeout_s * 1000), capture=capture
+        url,
+        action,
+        selector,
+        query,
+        timeout_ms=int(timeout_s * 1000),
+        capture=capture,
+        await_human=awaiting,
+        handoff_timeout_ms=wait_seconds * 1000,
+        auto_submit=_auto_submit_enabled(),
     )
     try:
-        proc = _run_browser_script(script, timeout=timeout_s)
+        proc = _run_browser_script(
+            script, timeout=timeout_s + (wait_seconds if awaiting else 0)
+        )
     except subprocess.TimeoutExpired:
         return {"ok": False, "url": url, "error": f"browser timeout after {timeout_s}s"}
     except OSError as exc:
@@ -526,6 +762,10 @@ def browse(
     release_round = (action or "load").lower() == "release"
     title, final_url = extract_metadata(combined)
     snapshot = extract_snapshot(combined, max_chars=max_chars)
+    control_back = extract_control_back(combined)
+    resumed = extract_resumed(combined)
+    submitted = extract_submitted(combined)
+    handoff_timeout_hit = extract_handoff_timeout(combined)
     nav_error = extract_nav_error(combined)
     action_error = extract_action_error(combined)
     session_error = extract_session_error(combined)
@@ -570,6 +810,31 @@ def browse(
             + "once they say to continue, resume with action='claim' (this reclaims the space "
             + "and snapshots the page).",
         }
+    if kind and awaiting and not resumed:
+        notify_master(_handoff_announcement(kind, final_url or url, captcha_image, captcha_audio))
+    if handoff_timeout_hit is not None:
+        return {
+            "ok": False,
+            "paused": True,
+            "handoff_timeout": True,
+            "awaiting_human": True,
+            "url": url,
+            "error": (
+                "the master did not hand control back within "
+                f"{handoff_timeout_hit // 1000}s, so the tab is still parked"
+            ),
+            "space_id": None,
+            "next_step": (
+                "call ask_master to check whether the master finished with the open "
+                "browser tab; once they confirm, resume with action='claim' (no url) "
+                "and read the result page"
+            ),
+            "hint": (
+                "The tab is parked under the master's control. Ask the master through "
+                "'ask_master' whether they are done with it; resume with "
+                "action='claim' when they say to continue."
+            ),
+        }
     if not snapshot and not title:
         return {
             "ok": False,
@@ -580,6 +845,9 @@ def browse(
             "session_error": session_error,
             "stderr": proc.stderr.strip()[:max_chars],
         }
+    if resumed:
+        result_snapshot = extract_result_snapshot(combined, max_chars=max_chars)
+        snapshot = result_snapshot or snapshot
     result: Dict[str, object] = {
         "ok": True,
         "url": url,
@@ -591,11 +859,17 @@ def browse(
         "action": action,
         "result": snapshot,
     }
+    if control_back:
+        result["control_returned"] = True
+    if resumed:
+        result["resumed"] = True
+    if submitted is not None:
+        result["submitted"] = submitted
     if extract_claimed(combined):
         result["claimed"] = True
     if screenshot:
         result["screenshot"] = screenshot
-    if kind:
+    if kind and not resumed:
         _raise_ego_lite_window()
         hint = (
             "Stop guessing and ask the master through 'ask_master'. The ego-lite "
@@ -609,11 +883,17 @@ def browse(
                 f"{captcha_image!r} — give the master that path so they can open it "
                 "(and play the audio file when present) to read the code."
             )
-        hint += (
-            " When the master confirms they submitted the form, resume with "
-            "action='claim' (no url) to read the result page — do NOT fill the "
-            "CAPTCHA answer yourself."
-        )
+        if awaiting:
+            hint += (
+                " Then hand control back — pico waits for the browser, submits the "
+                "form itself, and reads the result page without a second instruction."
+            )
+        else:
+            hint += (
+                " When the master confirms they submitted the form, resume with "
+                "action='claim' (no url) to read the result page — do NOT fill the "
+                "CAPTCHA answer yourself."
+            )
         need_human: Dict[str, object] = {
             "kind": kind,
             "message": _HUMAN_MESSAGES.get(kind, "The page needs a human."),
@@ -627,6 +907,11 @@ def browse(
         logger.warning(
             f"[bold yellow]Browser needs the master[/bold yellow]: {kind}"
             + (f" (saved {captcha_image})" if captcha_image else "")
+        )
+    elif resumed:
+        logger.info(
+            f"[bold green]Browser resumed[/bold green]: {title or final_url or url} "
+            + (f"(submitted: {submitted.get('how')})" if submitted else "")
         )
     else:
         if url:
@@ -716,6 +1001,53 @@ def extract_need_human(stdout: str) -> Optional[str]:
     return None
 
 
+def extract_control_back(stdout: str) -> bool:
+    """Return True when the master handed the browser back to the agent."""
+    return any(
+        line.startswith(_CONTROL_BACK_MARK)
+        and line[len(_CONTROL_BACK_MARK):].strip().lower() == "true"
+        for line in stdout.splitlines()
+    )
+
+
+def extract_resumed(stdout: str) -> bool:
+    """Return True when the script resumed the goal after the master's input."""
+    return any(
+        line.startswith(_RESUMED_MARK)
+        and line[len(_RESUMED_MARK):].strip().lower() == "true"
+        for line in stdout.splitlines()
+    )
+
+
+def extract_submitted(stdout: str) -> Optional[Dict[str, str]]:
+    """Return the SUBMITTED payload describing what pico pressed, when present."""
+    for line in stdout.splitlines():
+        if not line.startswith(_SUBMITTED_MARK):
+            continue
+        raw = line[len(_SUBMITTED_MARK):].strip()
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"how": "unknown", "selector": "", "reason": raw}
+        if isinstance(data, dict):
+            return {str(key): str(value) for key, value in data.items()}
+        return {"how": "unknown", "selector": "", "reason": raw}
+    return None
+
+
+def extract_handoff_timeout(stdout: str) -> Optional[int]:
+    """Return the HANDOFF_TIMEOUT duration in milliseconds, when present."""
+    for line in stdout.splitlines():
+        if not line.startswith(_HANDOFF_TIMEOUT_MARK):
+            continue
+        raw = line[len(_HANDOFF_TIMEOUT_MARK):].strip()
+        try:
+            return int(raw)
+        except ValueError:
+            return 0
+    return None
+
+
 def extract_captcha_image(stdout: str) -> Optional[str]:
     """Return the path of a saved CAPTCHA image (or fallback screenshot), if any."""
     for line in stdout.splitlines():
@@ -740,16 +1072,26 @@ def extract_screenshot(stdout: str) -> Optional[str]:
     return None
 
 
-def extract_snapshot(stdout: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
-    """Return the snapshot block between markers, truncated to max_chars."""
-    before = stdout.find(_SNAPSHOT_BEGIN)
+def _extract_block(stdout: str, begin_mark: str, end_mark: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
+    """Return the text between two markers, truncated to max_chars."""
+    before = stdout.find(begin_mark)
     if before == -1:
         return ""
-    start = before + len(_SNAPSHOT_BEGIN)
-    end = stdout.find(_SNAPSHOT_END, start)
+    start = before + len(begin_mark)
+    end = stdout.find(end_mark, start)
     if end == -1:
         end = len(stdout)
-    snapshot = stdout[start:end].strip("\n")
-    if len(snapshot) > max_chars and max_chars > 0:
-        snapshot = snapshot[:max_chars] + "\n...[truncated by pico]"
-    return snapshot
+    block = stdout[start:end].strip("\n")
+    if len(block) > max_chars and max_chars > 0:
+        block = block[:max_chars] + "\n...[truncated by pico]"
+    return block
+
+
+def extract_snapshot(stdout: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
+    """Return the snapshot block between markers, truncated to max_chars."""
+    return _extract_block(stdout, _SNAPSHOT_BEGIN, _SNAPSHOT_END, max_chars)
+
+
+def extract_result_snapshot(stdout: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
+    """Return the post-hand-off result snapshot, or "" when there was no resume."""
+    return _extract_block(stdout, _RESULT_BEGIN, _RESULT_END, max_chars)

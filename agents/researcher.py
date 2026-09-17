@@ -48,22 +48,20 @@ _RESEARCHER_SYSTEM_PROMPT = (
     "straight to it with action='load' using that URL. Do not guess deep URLs — "
     "read them from snapshots. When a page shows a CAPTCHA, a login/OTP prompt, "
     "or required form fields, STOP guessing — the result includes 'need_human' "
-    "and the browser is handed to the master on that page. Call 'ask_master' to "
-    "have {master} complete it in the open browser window (e.g. 'I hit a "
-    "CAPTCHA on <url>, please type the CAPTCHA into the field and click submit "
-    "in the open browser, then tell me when done'). The master types the "
-    "CAPTCHA (and any required fields) and submits the form themselves — you "
-    "never fill a CAPTCHA answer. Once they confirm, resume the same page with "
-    "ego_lite_browse_use action='claim' and READ the result page. If a browse call returns "
-    "'paused', the tab is parked under {master}'s control from an earlier "
-    "hand-off — this is a RECOVERY situation. You MUST follow this exact flow: "
+    "and the tool hands the tab to the master: it tells {master} what to do and "
+    "WAITS for him to hand control back, then pico submits the form itself and "
+    "returns the result page — just report what the tool returns and never fill "
+    "a CAPTCHA answer yourself. If a browse call returns "
+    "'paused', the tab is parked under {master}'s control (the wait timed out or "
+    "an earlier hand-off is open) — this is a RECOVERY situation. You MUST "
+    "follow this exact flow: "
     "call 'ask_master' immediately (e.g. 'The browser tab is parked under your "
     "control. Are you done with it? Say continue and I will resume browsing'), "
     "and once the master confirms they are done (they submitted the form), call "
-    "ego_lite_browse_use with action='claim' to reclaim the tab and snapshot the "
-    "page, then read the result and continue only if needed. The "
-    "paused result includes a next_step field with exact instructions. NEVER end "
-    "the task while paused — the browser is still open and waiting. Never invent "
+    "ego_lite_browse_use with action='claim' to reclaim the tab and READ the "
+    "result page. The paused result includes a next_step field with exact "
+    "instructions. NEVER end the task while a hand-off is unresolved — the "
+    "browser is still open and waiting. Never invent "
     "passwords, OTPs, or personal details. Stop as soon as the page clearly "
     "shows the result; do not keep clicking for no reason. Never access "
     "unrelated or private information. IMPORTANT — cleanup: once the goal is "
@@ -110,7 +108,12 @@ class Researcher(BaseAgent):
         return any(skill in skills for skill in BROWSER_SKILLS)
 
     def research(self, url: str, task: str = "Retrieve and summarize this page.") -> str:
-        """Attempt one browser task and summarize the outcome."""
+        """Attempt one browser task and summarize the outcome.
+
+        A human hand-off is resolved inside the tool call itself (the tool waits
+        for the master and resumes); only a ``paused`` result needs the
+        ``ask_master`` + ``action='claim'`` recovery flow here.
+        """
         if not self.browsable():
             return (
                 "No browser skill is installed yet, so I cannot browse "

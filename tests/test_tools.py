@@ -497,6 +497,79 @@ def test_browse_reports_form_with_mandatory_marker(monkeypatch):
     assert result["need_human"]["kind"] == "form_input"
 
 
+def test_browse_reports_need_human_on_otp(monkeypatch):
+    """OTP heuristic SHOULD fire on a code field even without a password prompt."""
+    stdout = (
+        "TITLE: Verify\n"
+        "FINAL_URL: https://example.com/recharge/verify\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'Enter the 6-digit OTP sent to your phone'\n"
+        "textbox [ref=9, loc=css:input[name=otp], label=Verification code]\n"
+        "button [ref=10, loc=css:button, label=Verify]\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com/recharge/verify")
+    assert result["ok"] is True
+    assert result["need_human"]["kind"] == "otp"
+    assert "submits the form itself" in result["need_human"]["message"]
+
+
+def test_browse_ignores_otp_keyword_without_input(monkeypatch):
+    """OTP heuristic should NOT fire on text-only 'OTP' mentions (e.g. a privacy note)."""
+    stdout = (
+        "TITLE: T\n"
+        "FINAL_URL: https://example.com\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'We will never ask for your OTP over chat.'\n"
+        "---SNAPSHOT-END---\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com")
+    assert result["ok"] is True
+    assert "need_human" not in result
+
+
+def test_browse_otp_handoff_auto_submits(monkeypatch):
+    """OTP result should auto-submit after the master hands control back."""
+    stdout = (
+        "TITLE: Verify\n"
+        "FINAL_URL: https://example.com/recharge/verify\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "text 'Enter the OTP sent to your phone'\n"
+        "textbox [ref=9, loc=css:input[name=otp], label=Verification code]\n"
+        "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:otp\n"
+        "CONTROL_BACK:true\n"
+        'SUBMITTED:{"how": "click", "selector": "[data-pico-submit=\'1\']", "reason": "clicked the submit control"}\n'
+        "TITLE: Recharge successful\n"
+        "FINAL_URL: https://example.com/recharge/done\n"
+        "---RESULT-BEGIN---\n"
+        "Recharge successful for account ending 1234\n"
+        "---RESULT-END---\n"
+        "RESUMED:true\n"
+    )
+    fake = _fake_proc(stdout)
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(
+        ego_lite_browse_use, "_run_browser_script",
+        lambda script, timeout: (captured.update(script=script) or fake),
+    )
+    result = browse("https://example.com/recharge/verify")
+    assert "const OTP_KW = " in captured["script"]
+    assert 'SUBMIT_KINDS = ["captcha", "form_input", "otp"]' in captured["script"]
+    assert result["ok"] is True
+    assert result["resumed"] is True
+    assert result["submitted"]["how"] == "click"
+    assert "account ending 1234" in result["result"]
+    assert "need_human" not in result
+
+
 def test_browse_reports_paused_when_master_owns_space(monkeypatch):
     stdout = "SESSION_PAUSED: the master currently owns this task space; browser commands are paused.\n"
     fake = _fake_proc(stdout)
@@ -614,6 +687,17 @@ def test_ask_master_returns_answer(monkeypatch):
     result = ask_tools.ask_master("Please solve the CAPTCHA")
     assert result["ok"] is True
     assert result["answer"] == "I solved it"
+    assert "ego_lite_browse_use" in result["hint"]
+
+
+def test_ask_master_answer_urges_continuing_the_task(monkeypatch):
+    monkeypatch.delenv("PICO_AUTO_APPROVE", raising=False)
+    monkeypatch.setattr(ask_tools.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *_: "click the Continue button at the top")
+    result = ask_tools.ask_master("Which option should be selected next?")
+    assert result["ok"] is True
+    assert "do not treat it as the final result" in result["hint"]
+    assert "navigate the browser" in result["hint"]
 
 
 def test_ask_master_unattended_does_not_prompt(monkeypatch):
@@ -645,6 +729,42 @@ def test_ask_master_uses_installed_handler(monkeypatch):
         assert result["answer"] == "done in the browser"
     finally:
         ask_tools.set_master_prompt(None)
+
+
+def test_notify_master_uses_installed_handler():
+    seen: list = []
+    ask_tools.set_master_notice(lambda text: seen.append(text))
+    try:
+        assert ask_tools.notify_master("  solve the CAPTCHA  ") is True
+        assert seen == ["solve the CAPTCHA"]
+    finally:
+        ask_tools.set_master_notice(None)
+
+
+def test_notify_master_without_handler_is_false():
+    ask_tools.set_master_notice(None)
+    assert ask_tools.notify_master("solve the CAPTCHA") is False
+
+
+def test_notify_master_ignores_blank_text():
+    seen: list = []
+    ask_tools.set_master_notice(lambda text: seen.append(text))
+    try:
+        assert ask_tools.notify_master("   ") is False
+        assert seen == []
+    finally:
+        ask_tools.set_master_notice(None)
+
+
+def test_notify_master_swallows_handler_errors():
+    def boom(_text: str) -> None:
+        raise RuntimeError("ui is gone")
+
+    ask_tools.set_master_notice(boom)
+    try:
+        assert ask_tools.notify_master("solve the CAPTCHA") is False
+    finally:
+        ask_tools.set_master_notice(None)
 
 
 def test_extract_session_error():
@@ -769,3 +889,186 @@ def test_ego_lite_browse_press_custom_key(monkeypatch):
     monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", fake_run)
     browse("https://example.com", action="press", query="Tab")
     assert 'page.keyboard.press("Tab")' in captured["script"]
+
+
+_CAPTCHA_HANDOFF_SNAPSHOT = (
+    'textbox [ref=3, loc=css:input[name="captcha"]]\n'
+    "text 'Enter the characters shown to prove you are human'\n"
+)
+
+
+def test_browse_handoff_script_waits_for_control(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+
+    def fake_run(script, timeout):
+        captured["script"] = script
+        return _snapshot_proc()
+
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", fake_run)
+    result = browse("https://example.com", handoff_timeout=300)
+    assert result["ok"] is True
+    assert "await task.handOff()" in captured["script"]
+    assert "waitForControl(" in captured["script"]
+    assert "HANDOFF_TIMEOUT_MS = 300000" in captured["script"]
+    assert "CONTROL_BACK:" in captured["script"]
+
+
+def test_browse_auto_resume_returns_result(monkeypatch):
+    stdout = (
+        "TITLE: Captcha page\n"
+        "FINAL_URL: https://example.com/captcha\n"
+        "---SNAPSHOT-BEGIN---\n"
+        "captcha page snapshot\n"
+        "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:captcha\n"
+        "CONTROL_BACK:true\n"
+        'SUBMITTED:{"how": "click", "selector": "@9", "reason": "clicked the submit control"}\n'
+        "TITLE: Results\n"
+        "FINAL_URL: https://example.com/results\n"
+        "---RESULT-BEGIN---\n"
+        "results page snapshot\n"
+        "---RESULT-END---\n"
+        "RESUMED:true\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com/captcha")
+    assert result["ok"] is True
+    assert result["resumed"] is True
+    assert result["control_returned"] is True
+    assert result["submitted"]["how"] == "click"
+    assert "results page snapshot" in result["result"]
+    assert "need_human" not in result
+
+
+def test_browse_handoff_timeout_parks_the_tab(monkeypatch):
+    stdout = (
+        "TITLE: Captcha page\n"
+        "FINAL_URL: https://example.com/captcha\n"
+        "---SNAPSHOT-BEGIN---\n"
+        + _CAPTCHA_HANDOFF_SNAPSHOT
+        + "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:captcha\n"
+        "HANDOFF_TIMEOUT:600000\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com/captcha")
+    assert result["ok"] is False
+    assert result["paused"] is True
+    assert result["handoff_timeout"] is True
+    assert result["awaiting_human"] is True
+    assert "ask_master" in result["next_step"]
+
+
+def test_browse_await_human_can_be_disabled(monkeypatch):
+    stdout = (
+        "TITLE: Captcha page\n"
+        "FINAL_URL: https://example.com/captcha\n"
+        "---SNAPSHOT-BEGIN---\n"
+        + _CAPTCHA_HANDOFF_SNAPSHOT
+        + "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:captcha\n"
+    )
+    fake = _fake_proc(stdout)
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(
+        ego_lite_browse_use, "_run_browser_script",
+        lambda script, timeout: (captured.update(script=script) or fake),
+    )
+    result = browse("https://example.com/captcha", await_human=False)
+    assert "waitForControl(" not in captured["script"]
+    assert result["need_human"]["kind"] == "captcha"
+    assert "resumed" not in result
+    assert "awaiting_human" not in result
+
+
+def test_auto_submit_skips_login_pages(monkeypatch):
+    stdout = (
+        "TITLE: Sign in\n"
+        "FINAL_URL: https://example.com/login\n"
+        "---SNAPSHOT-BEGIN---\n"
+        'textbox [ref=1, loc=css:input[name="password"]]\n'
+        "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:login\n"
+        "CONTROL_BACK:true\n"
+        'SUBMITTED:{"how": "skipped", "selector": "", "reason": "login page: read only"}\n'
+        "RESUMED:true\n"
+    )
+    fake = _fake_proc(stdout)
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    result = browse("https://example.com/login")
+    assert result["resumed"] is True
+    assert result["submitted"]["reason"] == "login page: read only"
+
+
+def test_browse_honours_handoff_timeout_env(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setenv("PICO_BROWSER_HANDOFF_TIMEOUT", "120")
+
+    def fake_run(script, timeout):
+        captured["script"] = script
+        captured["timeout"] = timeout
+        return _snapshot_proc()
+
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", fake_run)
+    result = browse("https://example.com")
+    assert result["ok"] is True
+    assert "HANDOFF_TIMEOUT_MS = 120000" in captured["script"]
+    assert captured["timeout"] == ego_lite_browse_use.DEFAULT_TIMEOUT + 120
+
+
+def test_browse_notifies_master_on_handoff(monkeypatch):
+    stdout = (
+        "TITLE: Captcha page\n"
+        "FINAL_URL: https://example.com/captcha\n"
+        "---SNAPSHOT-BEGIN---\n"
+        + _CAPTCHA_HANDOFF_SNAPSHOT
+        + "---SNAPSHOT-END---\n"
+        "CAPTCHA_IMAGE:/tmp/captcha-1.png\n"
+        "NEED_HUMAN:captcha\n"
+        "HANDOFF_TIMEOUT:600000\n"
+    )
+    fake = _fake_proc(stdout)
+    seen: list = []
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setattr(ego_lite_browse_use, "_run_browser_script", lambda script, timeout: fake)
+    monkeypatch.setattr(ego_lite_browse_use, "notify_master", lambda text: seen.append(text))
+    browse("https://example.com/captcha")
+    assert len(seen) == 1
+    assert "CAPTCHA" in seen[0]
+    assert "https://example.com/captcha" in seen[0]
+    assert "/tmp/captcha-1.png" in seen[0]
+
+
+def test_browse_auto_submit_disabled_env(monkeypatch):
+    stdout = (
+        "TITLE: Captcha page\n"
+        "FINAL_URL: https://example.com/captcha\n"
+        "---SNAPSHOT-BEGIN---\n"
+        + _CAPTCHA_HANDOFF_SNAPSHOT
+        + "---SNAPSHOT-END---\n"
+        "NEED_HUMAN:captcha\n"
+        "CONTROL_BACK:true\n"
+        'SUBMITTED:{"how": "skipped", "selector": "", "reason": "auto-submit disabled"}\n'
+        "RESUMED:true\n"
+    )
+    fake = _fake_proc(stdout)
+    captured: dict = {}
+    monkeypatch.setattr(ego_lite_browse_use, "browser_available", lambda: True)
+    monkeypatch.setenv("PICO_BROWSER_AUTO_SUBMIT", "0")
+    monkeypatch.setattr(
+        ego_lite_browse_use, "_run_browser_script",
+        lambda script, timeout: (captured.update(script=script) or fake),
+    )
+    result = browse("https://example.com/captcha")
+    assert "AUTO_SUBMIT = false" in captured["script"]
+    assert result["resumed"] is True
+    assert result["submitted"]["how"] == "skipped"
+    assert result["submitted"]["reason"] == "auto-submit disabled"

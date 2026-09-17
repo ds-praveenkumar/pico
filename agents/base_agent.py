@@ -24,6 +24,24 @@ logger = get_logger(__name__)
 DEFAULT_MAX_TURNS = 6
 DEFAULT_COMPACTION_TOKENS = 24000
 
+HANDOFF_REMINDER_LIMIT = 2
+
+_PARKED_TAB_NOTE = (
+    "WARNING: the ego-lite browser tab is still parked under the master's "
+    "control (a hand-off was reported but never resolved), so this answer may "
+    "be incomplete. Ask the master to finish in the open browser window and "
+    "resume with action='claim', or release/stop cleanly."
+)
+
+_HANDOFF_REMINDER_PROMPT = (
+    "The ego-lite browser tab is still handed off to the master — you cannot "
+    "finish the task yet. Call ask_master to tell the master what to do in the "
+    "open browser window and confirm they are done, then resume with "
+    "ego_lite_browse_use action='claim' (no url) to reclaim the tab and read "
+    "the result page. Only report the final answer once the hand-off is "
+    "resolved (claim/release succeeded) or the master says to stop."
+)
+
 _ZERO_USAGE = {"prompt": 0, "completion": 0, "total": 0}
 
 _COMPACT_SENTINEL = "Compaction summary of earlier conversation"
@@ -107,6 +125,8 @@ class BaseAgent:
         self.compaction_threshold = int(os.getenv("PICO_COMPACTION_TOKENS", DEFAULT_COMPACTION_TOKENS))
         self._run_tokens = 0
         self._compacted_once = False
+        self._awaiting_human = False
+        self._handoff_reminders = 0
 
     def system_instructions(self) -> str:
         """Return this agent's system prompt."""
@@ -163,6 +183,8 @@ class BaseAgent:
         bind_memory(self.memory)
         self._run_tokens = 0
         self._compacted_once = False
+        self._awaiting_human = False
+        self._handoff_reminders = 0
         try:
             final_text = self._loop(task, messages)
         finally:
@@ -188,6 +210,8 @@ class BaseAgent:
         bind_memory(self.memory)
         self._run_tokens = 0
         self._compacted_once = False
+        self._awaiting_human = False
+        self._handoff_reminders = 0
         try:
             final_text = await self._loop_async(messages)
         finally:
@@ -212,6 +236,17 @@ class BaseAgent:
                 break
             tool_calls = self._tool_calls_of(message)
             self._append_assistant(messages, message.content or "", tool_calls)
+            if not tool_calls and self._awaiting_human:
+                if self._handoff_reminders < HANDOFF_REMINDER_LIMIT:
+                    self._handoff_reminders += 1
+                    logger.warning(
+                        f"[bold yellow]{self.name} tried to finish with a parked browser tab[/bold yellow] "
+                        f"(reminder {self._handoff_reminders}/{HANDOFF_REMINDER_LIMIT})"
+                    )
+                    messages.append({"role": "user", "content": _HANDOFF_REMINDER_PROMPT})
+                    continue
+                logger.warning(f"[bold red]{self.name} finished with an unresolved browser hand-off[/bold red]")
+                return f"{_PARKED_TAB_NOTE} {message.content or ''}".strip()
             if not tool_calls:
                 logger.info(f"[bold green]{self.name} finished[/bold green] after {turn + 1} turn(s)")
                 return message.content or ""
@@ -238,6 +273,17 @@ class BaseAgent:
                 break
             tool_calls = self._tool_calls_of(message)
             self._append_assistant(messages, message.content or "", tool_calls)
+            if not tool_calls and self._awaiting_human:
+                if self._handoff_reminders < HANDOFF_REMINDER_LIMIT:
+                    self._handoff_reminders += 1
+                    logger.warning(
+                        f"[bold yellow]{self.name} tried to finish with a parked browser tab[/bold yellow] "
+                        f"(reminder {self._handoff_reminders}/{HANDOFF_REMINDER_LIMIT})"
+                    )
+                    messages.append({"role": "user", "content": _HANDOFF_REMINDER_PROMPT})
+                    continue
+                logger.warning(f"[bold red]{self.name} finished with an unresolved browser hand-off[/bold red]")
+                return f"{_PARKED_TAB_NOTE} {message.content or ''}".strip()
             if not tool_calls:
                 logger.info(f"[bold green]{self.name} finished[/bold green] after {turn + 1} turn(s)")
                 return message.content or ""
@@ -281,6 +327,7 @@ class BaseAgent:
             name = tool_call.function.name
             args = self._parse_args(tool_call)
             result = self._execute(name, args)
+            self._track_handoff_state(name, result)
             self._stream_tool_output(name, result)
             messages.append(
                 {
@@ -296,6 +343,7 @@ class BaseAgent:
             name = tool_call.function.name
             args = self._parse_args(tool_call)
             result = await self._execute_async(name, args)
+            self._track_handoff_state(name, result)
             self._stream_tool_output(name, result)
             messages.append(
                 {
@@ -327,6 +375,31 @@ class BaseAgent:
             self.on_tool(self.name, f"[{name}] {text}")
         except Exception:  # noqa: BLE001 - a UI hook must not break the tool loop
             logger.debug("tool output hook failed: %s", name, exc_info=True)
+
+    def _track_handoff_state(self, name: str, result: Any) -> None:
+        """Track browser hand-off state so the loop never abandons a parked tab."""
+        if name != "ego_lite_browse_use" or not isinstance(result, dict):
+            return
+        if (
+            result.get("need_human")
+            or result.get("paused")
+            or result.get("awaiting_human")
+            or result.get("handoff_timeout")
+        ):
+            self._awaiting_human = True
+            return
+        if (
+            result.get("resumed")
+            or result.get("claimed")
+            or result.get("released")
+            or result.get("control_returned")
+            or result.get("ok")
+        ):
+            self._awaiting_human = False
+
+    def _handoff_reminder(self) -> str:
+        """Return the reminder text used when the model finishes with a parked tab."""
+        return _HANDOFF_REMINDER_PROMPT
 
     def _execute(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Approve then run one tool call; a failing call never raises."""

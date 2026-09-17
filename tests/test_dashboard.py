@@ -199,6 +199,53 @@ def test_dashboard_read_line_falls_back_when_not_a_tty(monkeypatch):
     assert dash._input_active is False
 
 
+def test_dashboard_read_line_falls_back_when_raw_terminal_fails(monkeypatch):
+    import termios
+
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    def broken_tcgetattr(_fd):
+        raise termios.error("inappropriate ioctl for device")
+
+    monkeypatch.setattr("ui.dashboard.termios.tcgetattr", broken_tcgetattr)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "hello world")
+    assert dash.read_line("pico> ") == "hello world"
+    assert dash._input_active is False
+
+
+def test_dashboard_read_line_resets_state_between_calls(monkeypatch):
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    inputs = iter(["first", "second"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+    assert dash.read_line("pico> ") == "first"
+    assert dash._input_active is False
+    assert dash._input_buffer == ""
+    assert dash.read_line("pico> ") == "second"
+    assert dash._input_active is False
+    assert dash._input_buffer == ""
+
+
+def test_dashboard_freezes_repaints_while_reading_input():
+    seen: list = []
+
+    class FakeLive:
+        def update(self, renderable) -> None:
+            seen.append(1)
+
+    dash = Dashboard(console=_console(), provider="nvidia", model="m")
+    dash._live = FakeLive()
+    dash._reading_input = True
+    dash.refresh()
+    assert seen == []
+    dash._repaint()
+    assert seen == [1]
+    dash._reading_input = False
+    dash.refresh()
+    assert len(seen) == 2
+
+
 def test_dashboard_ask_yes_no_non_tty(monkeypatch):
     dash = Dashboard(console=_console(), provider="nvidia", model="m")
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)

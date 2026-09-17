@@ -31,7 +31,16 @@ _PLAN_INSTRUCTION = (
     "DIRECTLY, e.g. "
     '{"agent": "executor", "task": "list the latest emails using the gmail_list tool"} — '
     "Gmail OAuth is already configured for the master, so never plan a step that "
-    "asks the master for OAuth credentials or email access details."
+    "asks the master for OAuth credentials or email access details. "
+    "Never plan a bare 'ask the master' step: when a step needs details pico does "
+    'not have (e.g. which operator, how to pay), plan the real action instead, such '
+    'as {"agent": "executor", "task": "recharge the mobile number X via its operator\'s '
+    "portal; ask the master only for details pico cannot guess and then finish "
+    "the recharge\"} — the sub-agent asks mid-task and keeps going from the answer. "
+    "For website actions plan the browsing step, e.g. "
+    '{"agent": "executor", "task": "open the operator\'s site and recharge the number, '
+    'asking the master for anything pico cannot guess"} so the browser is driven to '
+    "completion rather than stopping at a question."
 )
 
 

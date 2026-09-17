@@ -182,6 +182,9 @@ LOG_LEVEL=INFO                  # optional
 PICO_MEMORY_PATH=~/.pico        # optional memory directory
 PICO_COMPACTION_TOKENS=24000    # optional auto-compaction threshold
 PICO_FONT_SIZE=18               # optional TUI font size in points (OSC 7770 terminals)
+PICO_BROWSER_AWAIT_HUMAN=1      # optional: wait for the master during a browser hand-off
+PICO_BROWSER_HANDOFF_TIMEOUT=600  # optional: seconds to wait for the master (30-7200)
+PICO_BROWSER_AUTO_SUBMIT=1      # optional: submit the form once the master hands control back
 GMAIL_CLIENT_SECRET_PATH=file:///path/to/client_secret_*.json  # OAuth app
 GMAIL_CREDENTIALS_PATH=~/.agents/gmail                         # token dir (optional)
 GMAIL_IMAP_USER=you@gmail.com   # optional legacy IMAP address (superseded by OAuth)
@@ -330,6 +333,32 @@ Credentials and the authorized token live in `~/.agents/sheets/` (override with
 - `url_fetch` — read one public page as plain text; SSRF-guarded (no private or
   loopback destinations), byte-capped, time-limited.
 - `voice_speak` — speak text aloud on macOS via the built-in `say` command.
+
+## Browser hand-off (CAPTCHA / OTP / forms)
+
+When a page needs the master — a CAPTCHA, an OTP, a login, or a required form —
+`ego_lite_browse_use` hands the browser tab to him, saves the CAPTCHA image
+(and audio CAPTCHA when present) to a timestamped artifact file, and shows a
+non-blocking notice telling him exactly what to do. The tool then **waits in
+place** (`task.waitForControl`) for him to finish and hand control back; when
+he does, pico reclaims the tab, submits the form itself (CAPTCHA, OTP, and
+required-form pages; login pages stay read-only — pico never invents
+credentials, CAPTCHA answers, or OTPs), and reads the result page. The result
+reports `resumed: true` and `submitted: {...}`, so the task continues without a
+second instruction.
+
+If the master does not return control within the wait window, the result is
+`paused` with recovery instructions: the agent asks via `ask_master` and
+resumes later with `action='claim'`. A loop guard in `BaseAgent` makes sure
+pico never silently ends a task while a browser tab is still parked.
+
+Optional `.env` settings:
+
+```
+PICO_BROWSER_AWAIT_HUMAN=1      # 0 disables the in-place wait (old ask-then-claim flow)
+PICO_BROWSER_HANDOFF_TIMEOUT=600  # seconds to wait for the master (30-7200)
+PICO_BROWSER_AUTO_SUBMIT=1      # 0 disables the automatic form submit after resuming
+```
 
 ## Application logs
 

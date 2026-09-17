@@ -257,6 +257,7 @@ class PicoTUI(App):
         self.pico.on_tool = self._on_tool
         self._refresh_cancel_token()
         ask_tools.set_master_prompt(self.ask_text)
+        ask_tools.set_master_notice(self.notify_master)
         capture_logs(True)
 
         self.query_one("#plan", DataTable).add_columns("Status", "Step")
@@ -271,9 +272,10 @@ class PicoTUI(App):
         self.focus_prompt()
 
     def on_unmount(self) -> None:
-        """Restore normal console logging and clear the master-prompt bridge."""
+        """Restore normal console logging and clear the master bridges."""
         capture_logs(False)
         ask_tools.set_master_prompt(None)
+        ask_tools.set_master_notice(None)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -413,6 +415,27 @@ class PicoTUI(App):
             self.call_from_thread(self._ask_modal_from_thread, question, max_len, holder)
             holder["event"].wait(timeout=1800)
             return holder["answer"]
+
+    def notify_master(self, text: str) -> None:
+        """Non-blocking master notice, safe to call from any thread."""
+        message = (text or "").strip()
+        if not message:
+            return
+        try:
+            asyncio.get_running_loop()
+            self._notify_master_on_loop(message)
+        except RuntimeError:
+            self.call_from_thread(self._notify_master_on_loop, message)
+
+    def _notify_master_on_loop(self, text: str) -> None:
+        """Show a master notice in the status bar and log pane."""
+        self._status = text
+        try:
+            self.query_one("#statusbar", Static).update(self._status)
+        except Exception:  # noqa: BLE001 - the status bar may not be mounted yet
+            pass
+        self.add_log(f"notice: {text}")
+        self.notify(text, title="pico needs the master", timeout=10)
 
     def _ask_modal_from_thread(self, question: str, max_len: int, holder: Dict[str, Any]) -> None:
         """Schedule the ask modal on the event loop and bridge its result back."""
