@@ -626,7 +626,7 @@
       <div class="fcard reveal d4">
         <span class="ico">backends</span>
         <h4>Multiple backends</h4>
-        <p>OpenAI-compatible clients for OpenAI, NVIDIA NIM, Cerebras, Groq, and OpenRouter, selected via <code>PROVIDER</code>.</p>
+        <p>OpenAI-compatible clients for OpenAI, NVIDIA NIM, Cerebras, Groq, OpenRouter, EvoLink, UnoRouter, Gemini, and SambaNova, selected via <code>PROVIDER</code>.</p>
       </div>
       <div class="fcard reveal d1">
         <span class="ico">uises</span>
@@ -700,6 +700,10 @@
       <span class="prov"><b>cerebras</b> — fast inference</span>
       <span class="prov"><b>groq</b> — low-latency models</span>
       <span class="prov"><b>openrouter</b> — model router</span>
+      <span class="prov"><b>evolink</b> — model gateway</span>
+      <span class="prov"><b>unorouter</b> — free model router</span>
+      <span class="prov"><b>gemini</b> — Google AI Studio</span>
+      <span class="prov"><b>sambanova</b> — fast RDU inference</span>
     </div>
   </div>
 </section>
@@ -716,7 +720,7 @@ cp .env.example .env        # fill in your provider keys
 python app.py               # interactive REPL
 python app.py "Summarize README.md" -y   # single-shot, auto-approved tools</code></pre>
     </div>
-    <p>Providers are selected with <code>PROVIDER</code> in <code>.env</code> — <code>openai</code>, <code>nvidia</code> (default), <code>cerebras</code>, <code>groq</code>, or <code>openrouter</code>. Secrets live only in <code>.env</code>, which is git-ignored.</p>
+    <p>Providers are selected with <code>PROVIDER</code> in <code>.env</code> — <code>openai</code>, <code>nvidia</code> (default), <code>cerebras</code>, <code>groq</code>, <code>openrouter</code>, <code>evolink</code>, <code>unorouter</code>, <code>gemini</code>, or <code>sambanova</code>. Secrets live only in <code>.env</code>, which is git-ignored.</p>
   </div>
 </section>
 

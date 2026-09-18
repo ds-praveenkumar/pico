@@ -172,12 +172,16 @@ Token accounting lives on each LLM client (`BaseLLM.usage` / `last_generation`);
 `PROVIDER` selects the model backend; `nvidia` is the default.
 
 ```
-PROVIDER=nvidia                 # openai | nvidia | cerebras | groq | openrouter
+PROVIDER=nvidia                 # openai | nvidia | cerebras | groq | openrouter | evolink | unorouter | gemini | sambanova
 MODEL_ID=...  API_KEY=...       # openai
 NVIDIA_MODEL_ID / NVIDIA_API_KEY / NVIDIA_BASE_URL   # nvidia
 CEREBRAS_MODEL_ID / CEREBRAS_API_KEY / CEREBRAS_BASE_URL  # cerebras
 GROQ_MODEL_ID / GROQ_API_KEY / GROQ_BASE_URL         # groq (GROK_* accepted as fallback)
 OPENROUTER_MODEL_ID / OPENROUTER_API_KEY / OPENROUTER_BASE_URL  # openrouter
+EVOLINK_MODEL_ID / EVOLINK_API_KEY / EVOLINK_BASE_URL   # evolink (base default direct.evolink.ai/v1)
+UNO_ROUTER_MODEL_ID / UNO_ROUTER_API_KEY / UNO_ROUTER_BASE_URL  # unorouter (base default api.unorouter.com/v1)
+GEMINI_MODEL_ID / GEMINI_API_KEY / GEMINI_BASE_URL   # gemini (OpenAI-compatible AI Studio endpoint)
+SAMBANOVA_MODEL_ID / SAMBANOVA_API_KEY / SAMBANOVA_BASE_URL  # sambanova (base default api.sambanova.ai/v1)
 LOG_LEVEL=INFO                  # optional
 PICO_MEMORY_PATH=~/.pico        # optional memory directory
 PICO_COMPACTION_TOKENS=24000    # optional auto-compaction threshold
